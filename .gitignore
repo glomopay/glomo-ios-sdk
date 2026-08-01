@@ -1,0 +1,7 @@
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Local Swift UI wrapper used only for SDK testing.
+Example/

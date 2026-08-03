@@ -112,6 +112,8 @@ final class ContractCoverageTests: XCTestCase {
         XCTAssertTrue(GlomoPayInjectionScripts.main.contains("__glomo_ GlomoPayBridge_Injected__".replacingOccurrences(of: " ", with: "")))
         XCTAssertFalse(GlomoPayInjectionScripts.main.contains("scrollIntoView"))
         XCTAssertTrue(GlomoPayInjectionScripts.credentialedRequestsFix.contains("credentials"))
+        XCTAssertTrue(GlomoPayInjectionScripts.flow.contains("GlomoPayFlowBridge"))
+        XCTAssertTrue(GlomoPayInjectionScripts.flow.contains("window.open"))
     }
 
     func testBridgeRoutesAnalyticsForWindowAndPaymentEvents() {

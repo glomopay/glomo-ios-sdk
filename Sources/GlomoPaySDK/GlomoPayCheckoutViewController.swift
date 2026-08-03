@@ -16,6 +16,10 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private let apiClient: GlomoPayApiClient
     private let analytics: GlomoPayAnalytics
     private var webView: WKWebView!
+    private var flowWebView: WKWebView?
+    private var flowOverlay: UIView?
+    private var flowLoadingView: UIView?
+    private var flowProgressView: UIProgressView?
     private var progressView: UIProgressView!
     private var loadingView: UIView!
     private var loadingLabel: UILabel!
@@ -25,6 +29,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private var didTerminate = false
     private var progressObservation: NSKeyValueObservation?
     private var bridgeHandler: GlomoPayJavaScriptBridge?
+    private var flowBridgeHandler: GlomoPayJavaScriptBridge?
     private var eventRouter: GlomoPayEventRouter!
 
     public init(
@@ -269,6 +274,12 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     }
 
     public func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        if webView === flowWebView {
+            flowLoadingView?.isHidden = false
+            flowProgressView?.isHidden = false
+            listener?.onEvent(name: "flow.page_started", payload: ["url": webView.url?.absoluteString ?? ""])
+            return
+        }
         loadingView.isHidden = false
         progressView.isHidden = false
         loadingLabel.text = "Loading checkout..."
@@ -276,20 +287,38 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     }
 
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        if webView === flowWebView {
+            listener?.onEvent(name: "flow.page_committed", payload: ["url": webView.url?.absoluteString ?? ""])
+            return
+        }
         listener?.onEvent(name: "navigation.committed", payload: ["url": webView.url?.absoluteString ?? ""])
     }
 
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if webView === flowWebView {
+            flowLoadingView?.isHidden = true
+            flowProgressView?.isHidden = true
+            listener?.onEvent(name: "flow.page_finished", payload: ["url": webView.url?.absoluteString ?? ""])
+            return
+        }
         loadingView.isHidden = true
         progressView.isHidden = true
         listener?.onEvent(name: "navigation.finished", payload: ["url": webView.url?.absoluteString ?? ""])
     }
 
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        if webView === flowWebView {
+            handleFlowError(error, url: webView.url)
+            return
+        }
         handleWebError(error, url: webView.url)
     }
 
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        if webView === flowWebView {
+            handleFlowError(error, url: webView.url)
+            return
+        }
         handleWebError(error, url: webView.url)
     }
 
@@ -300,8 +329,18 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     ) {
         if let response = navigationResponse.response as? HTTPURLResponse,
            !(200..<400).contains(response.statusCode) {
+            if navigationResponse.response.url == flowWebView?.url {
+                listener?.onEvent(name: "flow.http_error", payload: [
+                    "url": response.url?.absoluteString ?? "",
+                    "statusCode": response.statusCode,
+                ])
+            }
             let error = ConnectionError.fromHTTPStatus(response.statusCode, failedURL: response.url)
-            deliverConnectionError(error)
+            if webView === flowWebView {
+                showFlowError(error)
+            } else {
+                deliverConnectionError(error)
+            }
         }
         decisionHandler(.allow)
     }
@@ -311,6 +350,11 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
+        if webView === flowWebView {
+            listener?.onEvent(name: "flow.url_change", payload: ["url": navigationAction.request.url?.absoluteString ?? ""])
+            decisionHandler(.allow)
+            return
+        }
         listener?.onEvent(name: "navigation.url_change", payload: ["url": navigationAction.request.url?.absoluteString ?? ""])
         decisionHandler(.allow)
     }
@@ -342,17 +386,173 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     }
 
     private func openFlow(_ url: URL) {
+        closeFlow()
         listener?.onEvent(name: "redirect.opened", payload: ["url": url.absoluteString])
-        webView.load(URLRequest(url: url))
+
+        let overlay = UIView()
+        overlay.translatesAutoresizingMaskIntoConstraints = false
+        overlay.backgroundColor = .systemBackground
+        overlay.layer.zPosition = 100
+
+        let toolbar = UIView()
+        toolbar.translatesAutoresizingMaskIntoConstraints = false
+        toolbar.backgroundColor = .systemBackground
+
+        let back = UIButton(type: .system)
+        back.translatesAutoresizingMaskIntoConstraints = false
+        back.setTitle("Back", for: .normal)
+        back.addTarget(self, action: #selector(flowBackTapped), for: .touchUpInside)
+        toolbar.addSubview(back)
+
+        let flowConfiguration = WKWebViewConfiguration()
+        flowConfiguration.websiteDataStore = .default()
+        let userContentController = WKUserContentController()
+        userContentController.addUserScript(WKUserScript(
+            source: GlomoPayInjectionScripts.bootstrap(devMode: config.devMode),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+        userContentController.addUserScript(WKUserScript(
+            source: GlomoPayInjectionScripts.credentialedRequestsFix,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+        userContentController.addUserScript(WKUserScript(
+            source: GlomoPayInjectionScripts.flow,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+        let flowBridge = GlomoPayJavaScriptBridge { [weak self] body in
+            DispatchQueue.main.async { self?.eventRouter.handle(body: body) }
+        }
+        flowBridgeHandler = flowBridge
+        userContentController.add(flowBridge, name: "GlomoPayFlowBridge")
+        flowConfiguration.userContentController = userContentController
+
+        let flow = WKWebView(frame: .zero, configuration: flowConfiguration)
+        flow.translatesAutoresizingMaskIntoConstraints = false
+        flow.navigationDelegate = self
+        flow.allowsBackForwardNavigationGestures = true
+
+        let loading = makeFlowLoadingView()
+        let progress = UIProgressView(progressViewStyle: .default)
+        progress.translatesAutoresizingMaskIntoConstraints = false
+        progress.progressTintColor = view.tintColor
+
+        overlay.addSubview(toolbar)
+        overlay.addSubview(flow)
+        overlay.addSubview(loading)
+        overlay.addSubview(progress)
+        NSLayoutConstraint.activate([
+            toolbar.leadingAnchor.constraint(equalTo: overlay.leadingAnchor),
+            toolbar.trailingAnchor.constraint(equalTo: overlay.trailingAnchor),
+            toolbar.topAnchor.constraint(equalTo: overlay.safeAreaLayoutGuide.topAnchor),
+            toolbar.heightAnchor.constraint(equalToConstant: 50),
+            back.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 16),
+            back.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            flow.leadingAnchor.constraint(equalTo: overlay.leadingAnchor),
+            flow.trailingAnchor.constraint(equalTo: overlay.trailingAnchor),
+            flow.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            flow.bottomAnchor.constraint(equalTo: overlay.bottomAnchor),
+            loading.leadingAnchor.constraint(equalTo: flow.leadingAnchor),
+            loading.trailingAnchor.constraint(equalTo: flow.trailingAnchor),
+            loading.topAnchor.constraint(equalTo: flow.topAnchor),
+            loading.bottomAnchor.constraint(equalTo: flow.bottomAnchor),
+            progress.leadingAnchor.constraint(equalTo: overlay.leadingAnchor),
+            progress.trailingAnchor.constraint(equalTo: overlay.trailingAnchor),
+            progress.topAnchor.constraint(equalTo: flow.topAnchor),
+        ])
+
+        flowWebView = flow
+        flowOverlay = overlay
+        flowLoadingView = loading
+        flowProgressView = progress
+        view.addSubview(overlay)
+        NSLayoutConstraint.activate([
+            overlay.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            overlay.topAnchor.constraint(equalTo: view.topAnchor),
+            overlay.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        flow.load(URLRequest(url: url))
     }
 
     private func closeFlow() {
-        listener?.onEvent(name: "redirect.closed", payload: [:])
-        if webView.canGoBack { webView.goBack() }
+        let hadFlow = flowWebView != nil || flowOverlay != nil
+        flowWebView?.stopLoading()
+        flowWebView?.navigationDelegate = nil
+        flowWebView?.configuration.userContentController.removeAllUserScripts()
+        flowWebView?.configuration.userContentController.removeScriptMessageHandler(forName: "GlomoPayFlowBridge")
+        flowWebView?.removeFromSuperview()
+        flowOverlay?.removeFromSuperview()
+        flowWebView = nil
+        flowBridgeHandler = nil
+        flowOverlay = nil
+        flowLoadingView = nil
+        flowProgressView = nil
+        if hadFlow {
+            listener?.onEvent(name: "redirect.closed", payload: [:])
+        }
+    }
+
+    private func handleFlowError(_ error: Error, url: URL?) {
+        let nsError = error as NSError
+        let connectionError = ConnectionError.fromWebResourceError(
+            description: error.localizedDescription,
+            errorCode: nsError.code,
+            failedURL: url
+        )
+        showFlowError(connectionError)
+        listener?.onEvent(name: "flow.error", payload: [
+            "type": connectionError.type.rawValue,
+            "message": connectionError.message,
+            "errorCode": nsError.code,
+            "failedUrl": url?.absoluteString ?? "",
+        ])
+    }
+
+    private func showFlowError(_ error: ConnectionError) {
+        flowLoadingView?.isHidden = false
+        flowLoadingView?.subviews.compactMap { $0 as? UILabel }.first?.text = error.message
+        flowProgressView?.isHidden = true
+    }
+
+    private func makeFlowLoadingView() -> UIView {
+        let loading = UIView()
+        loading.translatesAutoresizingMaskIntoConstraints = false
+        loading.backgroundColor = .systemBackground
+        let indicator = UIActivityIndicatorView(style: .large)
+        indicator.translatesAutoresizingMaskIntoConstraints = false
+        indicator.startAnimating()
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.text = "Opening secure page..."
+        label.textColor = .secondaryLabel
+        label.textAlignment = .center
+        loading.addSubview(indicator)
+        loading.addSubview(label)
+        NSLayoutConstraint.activate([
+            indicator.centerXAnchor.constraint(equalTo: loading.centerXAnchor),
+            indicator.centerYAnchor.constraint(equalTo: loading.centerYAnchor, constant: -18),
+            label.topAnchor.constraint(equalTo: indicator.bottomAnchor, constant: 12),
+            label.leadingAnchor.constraint(equalTo: loading.leadingAnchor, constant: 24),
+            label.trailingAnchor.constraint(equalTo: loading.trailingAnchor, constant: -24),
+        ])
+        return loading
+    }
+
+    @objc private func flowBackTapped() {
+        guard let flow = flowWebView else { return }
+        if flow.canGoBack {
+            flow.goBack()
+        } else {
+            closeFlow()
+        }
     }
 
     private func handleResult(_ result: GlomoPayResult) {
         didTerminate = true
+        closeFlow()
         switch result {
         case .success, .failure, .cancelled:
             dismiss(animated: true)

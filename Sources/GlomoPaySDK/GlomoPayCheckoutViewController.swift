@@ -1,13 +1,14 @@
 #if canImport(UIKit) && canImport(WebKit)
 import UIKit
 import WebKit
+import UniformTypeIdentifiers
 
 /// Native iOS host for the main GlomoPay checkout document.
 ///
 /// The JavaScript message bridge is deliberately attached in the next phase;
 /// this controller owns only presentation, navigation, loading, and network
 /// error behavior so those concerns stay independently testable.
-public final class GlomoPayCheckoutViewController: UIViewController, WKNavigationDelegate, UIAdaptivePresentationControllerDelegate {
+public final class GlomoPayCheckoutViewController: UIViewController, WKNavigationDelegate, WKUIDelegate, UIDocumentPickerDelegate, UIAdaptivePresentationControllerDelegate {
     public let config: GlomoPayConfig
     public let requestedOrderType: String
     public weak var listener: GlomoPayListener?
@@ -30,6 +31,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private var progressObservation: NSKeyValueObservation?
     private var bridgeHandler: GlomoPayJavaScriptBridge?
     private var flowBridgeHandler: GlomoPayJavaScriptBridge?
+    private var filePickerCompletion: (([URL]?) -> Void)?
     private var eventRouter: GlomoPayEventRouter!
 
     public init(
@@ -120,6 +122,16 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             forMainFrameOnly: false
         ))
         userContentController.addUserScript(WKUserScript(
+            source: GlomoPayInjectionScripts.iosInputZoomFix,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+        userContentController.addUserScript(WKUserScript(
+            source: GlomoPayInjectionScripts.iosViewportFitFix,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+        userContentController.addUserScript(WKUserScript(
             source: GlomoPayInjectionScripts.main,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
@@ -134,6 +146,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         webView = WKWebView(frame: .zero, configuration: webConfiguration)
         webView.translatesAutoresizingMaskIntoConstraints = false
         webView.navigationDelegate = self
+        webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
         view.addSubview(webView)
 
@@ -418,6 +431,16 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             forMainFrameOnly: false
         ))
         userContentController.addUserScript(WKUserScript(
+            source: GlomoPayInjectionScripts.iosInputZoomFix,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+        userContentController.addUserScript(WKUserScript(
+            source: GlomoPayInjectionScripts.iosViewportFitFix,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+        userContentController.addUserScript(WKUserScript(
             source: GlomoPayInjectionScripts.flow,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
@@ -432,6 +455,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         let flow = WKWebView(frame: .zero, configuration: flowConfiguration)
         flow.translatesAutoresizingMaskIntoConstraints = false
         flow.navigationDelegate = self
+        flow.uiDelegate = self
         flow.allowsBackForwardNavigationGestures = true
 
         let loading = makeFlowLoadingView()
@@ -475,6 +499,35 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             overlay.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         flow.load(URLRequest(url: url))
+    }
+
+    @available(iOS 18.4, *)
+    public func webView(
+        _ webView: WKWebView,
+        runOpenPanelWith parameters: WKOpenPanelParameters,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping ([URL]?) -> Void
+    ) {
+        filePickerCompletion?([])
+        filePickerCompletion = completionHandler
+
+        let picker = UIDocumentPickerViewController(
+            forOpeningContentTypes: [UTType.item],
+            asCopy: true
+        )
+        picker.allowsMultipleSelection = parameters.allowsMultipleSelection
+        picker.delegate = self
+        present(picker, animated: true)
+    }
+
+    public func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        filePickerCompletion?(urls)
+        filePickerCompletion = nil
+    }
+
+    public func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        filePickerCompletion?([])
+        filePickerCompletion = nil
     }
 
     private func closeFlow() {

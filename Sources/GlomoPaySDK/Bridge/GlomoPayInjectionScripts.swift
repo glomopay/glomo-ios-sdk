@@ -32,6 +32,75 @@ public enum GlomoPayInjectionScripts {
     })();
     """
 
+    /// Prevents iOS WKWebView from zooming the page when an editable field
+    /// smaller than 16px receives focus.
+    public static let iosInputZoomFix = """
+    (function() {
+      if (window.__glomoIOSInputZoomFixApplied__) return;
+      window.__glomoIOSInputZoomFixApplied__ = true;
+
+      var css = [
+        'input, textarea, select {',
+        '  font-size: 16px !important;',
+        '  -webkit-text-size-adjust: 100%;',
+        '}',
+        'input:focus, textarea:focus, select:focus {',
+        '  touch-action: manipulation;',
+        '}'
+      ].join(' ');
+
+      function install() {
+        if (document.getElementById('__glomo_ios_input_zoom_fix__')) return;
+        var style = document.createElement('style');
+        style.id = '__glomo_ios_input_zoom_fix__';
+        style.type = 'text/css';
+        style.appendChild(document.createTextNode(css));
+        (document.head || document.documentElement).appendChild(style);
+      }
+
+      install();
+      document.addEventListener('DOMContentLoaded', install, { once: true });
+    })();
+    """
+
+    /// Keeps checkout content at a 1:1 viewport scale on iOS.
+    public static let iosViewportFitFix = """
+    (function() {
+      if (window.__glomoIOSViewportFitFixApplied__) return;
+      window.__glomoIOSViewportFitFixApplied__ = true;
+
+      function ensureViewport() {
+        var head = document.head || document.getElementsByTagName('head')[0];
+        if (!head) return;
+        var meta = document.querySelector('meta[name="viewport"]');
+        if (!meta) {
+          meta = document.createElement('meta');
+          meta.name = 'viewport';
+          head.appendChild(meta);
+        }
+        meta.setAttribute(
+          'content',
+          'width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover'
+        );
+      }
+
+      function normalizeZoom() {
+        try { document.documentElement.style.zoom = '1'; } catch (e) {}
+        try { if (document.body) document.body.style.zoom = '1'; } catch (e) {}
+      }
+
+      function apply() {
+        ensureViewport();
+        normalizeZoom();
+      }
+
+      apply();
+      document.addEventListener('DOMContentLoaded', apply, { once: true });
+      window.addEventListener('load', apply);
+      window.addEventListener('orientationchange', apply, true);
+    })();
+    """
+
     private static func build(bridgeName: String) -> String {
         """
         (function() {

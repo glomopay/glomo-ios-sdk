@@ -112,6 +112,10 @@ final class ContractCoverageTests: XCTestCase {
         XCTAssertTrue(GlomoPayInjectionScripts.main.contains("__glomo_ GlomoPayBridge_Injected__".replacingOccurrences(of: " ", with: "")))
         XCTAssertFalse(GlomoPayInjectionScripts.main.contains("scrollIntoView"))
         XCTAssertTrue(GlomoPayInjectionScripts.credentialedRequestsFix.contains("credentials"))
+        XCTAssertTrue(GlomoPayInjectionScripts.iosInputZoomFix.contains("font-size: 16px"))
+        XCTAssertTrue(GlomoPayInjectionScripts.iosInputZoomFix.contains("__glomoIOSInputZoomFixApplied__"))
+        XCTAssertTrue(GlomoPayInjectionScripts.iosViewportFitFix.contains("initial-scale=1"))
+        XCTAssertTrue(GlomoPayInjectionScripts.iosViewportFitFix.contains("user-scalable=no"))
         XCTAssertTrue(GlomoPayInjectionScripts.flow.contains("GlomoPayFlowBridge"))
         XCTAssertTrue(GlomoPayInjectionScripts.flow.contains("window.open"))
     }

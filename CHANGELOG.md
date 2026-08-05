@@ -13,4 +13,4 @@ All notable changes to the GlomoPay iOS SDK are documented here.
 - Native modal `WKWebView` checkout flow with loading, retry, navigation, and cancellation handling.
 - Standard and LRS checkout support with automatic order-based checkout detection.
 - JavaScript bridge and Flutter-compatible payment event routing.
-- Device compliance checks, analytics, logging, and XCTest coverage.
+- Device compliance checks, local logging, and XCTest coverage.

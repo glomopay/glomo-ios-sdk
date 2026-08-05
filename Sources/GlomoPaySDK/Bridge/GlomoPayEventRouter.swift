@@ -6,7 +6,6 @@ final class GlomoPayEventRouter {
     private let onComplete: (GlomoPayResult) -> Void
     private let onWindowOpen: (URL) -> Void
     private let onWindowClose: () -> Void
-    private let onAnalyticsEvent: (String, [String: Any]) -> Void
     private var terminalDelivered = false
 
     init(
@@ -14,15 +13,13 @@ final class GlomoPayEventRouter {
         devMode: Bool,
         onComplete: @escaping (GlomoPayResult) -> Void,
         onWindowOpen: @escaping (URL) -> Void = { _ in },
-        onWindowClose: @escaping () -> Void = {},
-        onAnalyticsEvent: @escaping (String, [String: Any]) -> Void = { _, _ in }
+        onWindowClose: @escaping () -> Void = {}
     ) {
         self.listener = listener
         self.devMode = devMode
         self.onComplete = onComplete
         self.onWindowOpen = onWindowOpen
         self.onWindowClose = onWindowClose
-        self.onAnalyticsEvent = onAnalyticsEvent
     }
 
     func handle(body: Any) {
@@ -30,14 +27,12 @@ final class GlomoPayEventRouter {
             let envelope = try dictionary(from: body)
             handle(envelope: envelope)
         } catch {
-            onAnalyticsEvent(GlomoPayAnalyticsEvents.invalidMessage, ["error": error.localizedDescription])
             emitError(message: error.localizedDescription)
         }
     }
 
     func handle(envelope: [String: Any]) {
         guard let type = envelope["type"] as? String, !type.isEmpty else {
-            onAnalyticsEvent(GlomoPayAnalyticsEvents.invalidMessage, ["error": "Bridge message is missing a type"])
             emitError(message: "Bridge message is missing a type")
             return
         }
@@ -47,15 +42,12 @@ final class GlomoPayEventRouter {
             if devMode { emit("console", envelope) }
         case "window.open":
             if let rawURL = envelope["url"] as? String, let url = URL(string: rawURL) {
-                onAnalyticsEvent(GlomoPayAnalyticsEvents.windowOpen, ["url": rawURL])
                 onWindowOpen(url)
                 emit("redirect.started", ["url": rawURL])
             } else {
-                onAnalyticsEvent(GlomoPayAnalyticsEvents.invalidMessage, ["error": "window.open has an invalid URL"])
                 emitError(message: "window.open has an invalid URL")
             }
         case "window.close":
-            onAnalyticsEvent(GlomoPayAnalyticsEvents.windowClose, [:])
             onWindowClose()
             emit("redirect.completed", [:])
         case "message":
@@ -93,33 +85,25 @@ final class GlomoPayEventRouter {
                 emitError(message: "Invalid payment success payload")
                 return
             }
-            if complete(.success(payload)) {
-                onAnalyticsEvent(GlomoPayAnalyticsEvents.paymentSuccess, ["payload_order_id": payload.orderId])
-            }
+            complete(.success(payload))
         case "payment.bank_transfer_submitted":
             let payload = GlomoPayPayload(json: payloadData)
             guard !payload.orderId.isEmpty else {
                 emitError(message: "Invalid bank transfer payload")
                 return
             }
-            if complete(.success(payload)) {
-                onAnalyticsEvent(GlomoPayAnalyticsEvents.bankTransferSubmitted, ["payload_order_id": payload.orderId])
-            }
+            complete(.success(payload))
         case "payment.failure", "payment.failed", "failed", "payment.error":
             let payload = GlomoPayPayload(json: payloadData)
             guard Validator.isValidPaymentPayload(payload) else {
                 emitError(message: "Invalid payment failure payload")
                 return
             }
-            if complete(.failure(message: "Payment failed", code: nil), payload: payload) {
-                onAnalyticsEvent(GlomoPayAnalyticsEvents.paymentFailure, ["payload_order_id": payload.orderId])
-            }
+            complete(.failure(message: "Payment failed", code: nil), payload: payload)
         case "payment.pending", "pending":
             break
         case "payment.cancelled", "cancelled", "checkout.closed":
-            if complete(.cancelled, termination: .userDismiss) {
-                onAnalyticsEvent(GlomoPayAnalyticsEvents.paymentTerminate, ["termination_source": TerminationSource.userDismiss.rawValue])
-            }
+            complete(.cancelled, termination: .userDismiss)
         default:
             break
         }

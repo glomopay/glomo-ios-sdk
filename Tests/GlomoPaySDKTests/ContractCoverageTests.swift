@@ -120,14 +120,12 @@ final class ContractCoverageTests: XCTestCase {
         XCTAssertTrue(GlomoPayInjectionScripts.flow.contains("window.open"))
     }
 
-    func testBridgeRoutesAnalyticsForWindowAndPaymentEvents() {
+    func testBridgeRoutesWindowAndPaymentEvents() {
         let listener = ContractCoverageListener()
-        var analyticsNames: [String] = []
         let router = GlomoPayEventRouter(
             listener: listener,
             devMode: false,
-            onComplete: { _ in },
-            onAnalyticsEvent: { name, _ in analyticsNames.append(name) }
+            onComplete: { _ in }
         )
 
         router.handle(envelope: ["type": "window.open", "url": "https://bank.example"])
@@ -143,10 +141,6 @@ final class ContractCoverageTests: XCTestCase {
             ],
         ])
 
-        XCTAssertEqual(analyticsNames, [
-            GlomoPayAnalyticsEvents.windowOpen,
-            GlomoPayAnalyticsEvents.paymentSuccess,
-        ])
         XCTAssertEqual(listener.successes.count, 1)
     }
 
@@ -161,14 +155,12 @@ final class ContractCoverageTests: XCTestCase {
         XCTAssertTrue(listener.errors.allSatisfy { $0.type == .unknown })
     }
 
-    func testDuplicatePaymentDoesNotDuplicateAnalytics() {
+    func testDuplicatePaymentDoesNotDuplicateCompletion() {
         let listener = ContractCoverageListener()
-        var analyticsNames: [String] = []
         let router = GlomoPayEventRouter(
             listener: listener,
             devMode: false,
-            onComplete: { _ in },
-            onAnalyticsEvent: { name, _ in analyticsNames.append(name) }
+            onComplete: { _ in }
         )
         let event: [String: Any] = [
             "type": "message",
@@ -186,7 +178,6 @@ final class ContractCoverageTests: XCTestCase {
         router.handle(envelope: event)
 
         XCTAssertEqual(listener.successes.count, 1)
-        XCTAssertEqual(analyticsNames, [GlomoPayAnalyticsEvents.paymentSuccess])
     }
 }
 

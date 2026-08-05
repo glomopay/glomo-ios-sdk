@@ -47,9 +47,9 @@ The package product is named `GlomoPaySDK`.
 - Native `WKWebView` checkout controller with modal presentation, loading state, retry, and navigation/error handling
 - Dedicated `Bridge` layer for WKScriptMessageHandler, injection scripts, and Flutter/Kotlin-compatible event routing
 - Isolated `Security` layer for jailbreak/debugger checks with Flutter/Kotlin strict-mode policy
-- Non-blocking analytics and logging layer with injectable transport and release-safe diagnostics
+- Local, developer-mode logging through `GlomoPayLogger`
 - Shared JavaScript injection contract for the upcoming `WKWebView` bridge
-- XCTest coverage for validation, URL generation, API errors, payloads, bridge events, security policy, analytics, and iOS WebView safeguards
+- XCTest coverage for validation, URL generation, API errors, payloads, bridge events, security policy, and iOS WebView safeguards
 
 ## Checkout flow
 

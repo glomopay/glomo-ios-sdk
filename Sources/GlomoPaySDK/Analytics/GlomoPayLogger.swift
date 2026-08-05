@@ -18,7 +18,7 @@ public enum GlomoPayLogger {
         print("[GlomoPay][ERROR] \(message)\(error.map { ": \($0.localizedDescription)" } ?? "")")
     }
 
-    /// Release diagnostics never include event properties, checkout URLs, keys, or IDs.
+    /// Local developer-mode diagnostics only; no network transport is used.
     public static func analytics(_ message: String) {
         if devMode {
             print("[GlomoPay][Analytics] \(message)")

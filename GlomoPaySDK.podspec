@@ -7,11 +7,11 @@ Pod::Spec.new do |spec|
     with a modal WKWebView, typed callbacks, device compliance checks, and
     Flutter-compatible payment events.
   DESC
-  spec.homepage     = "https://github.com/mayankmatkar/glomopay-ios-sdk"
-  spec.license      = { :type => "MIT" }
+  spec.homepage     = "https://github.com/glomopay/glomopay-ios-sdk"
+  spec.license      = { :type => "Apache-2.0", :file => "LICENSE" }
   spec.author       = { "GlomoPay" => "support@glomopay.com" }
   spec.source       = {
-    :git => "https://github.com/mayankmatkar/glomopay-ios-sdk.git",
+    :git => "https://github.com/glomopay/glomopay-ios-sdk.git",
     :tag => spec.version.to_s
   }
 

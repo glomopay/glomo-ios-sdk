@@ -1,0 +1,45 @@
+# Xcode / SwiftPM
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserstate
+*.xcuserdatad/
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+Package.resolved
+
+# CocoaPods
+Pods/
+*.xcworkspace/xcuserdata/
+
+# Build artifacts
+build/
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.xcframework
+*.framework.zip
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Secrets and signing material — never commit
+*.p12
+*.cer
+*.certSigningRequest
+*.mobileprovision
+*.p8
+secrets.plist
+Secrets.swift
+
+# Scratch
+temp_*
+scratch_*
+*_output*.txt
+*.log
+coverage/

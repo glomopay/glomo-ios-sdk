@@ -1,0 +1,10 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # The SDK intentionally has zero third-party dependencies (see CONTRIBUTING.md),
+  # so there is no swift package ecosystem entry. If one ever becomes necessary,
+  # that is a decision to make deliberately, not via a Dependabot config.

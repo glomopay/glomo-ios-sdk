@@ -1,0 +1,10 @@
+# Every change requires review from an internal GlomoPay mobile owner.
+# External contributors cannot approve on behalf of these owners.
+*                       @glomopay/mobile-devs
+
+# Governance, CI, release, licensing, and the published podspec are internal-only.
+/.github/               @glomopay/mobile-devs
+/LICENSE                @glomopay/mobile-devs
+/NOTICE                 @glomopay/mobile-devs
+/GlomoPaySDK.podspec    @glomopay/mobile-devs
+/Package.swift          @glomopay/mobile-devs

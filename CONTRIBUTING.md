@@ -20,20 +20,51 @@ their page. Implementing SCA natively is not. A native card form would feel like
 UX improvement and would be a compliance incident. If a requirement seems to need
 one, stop and raise it.
 
-### HARD RULE — no third-party dependencies
+### Dependencies — keep them few, get additions reviewed
 
-The SDK depends on Foundation, UIKit, and WebKit only. No Alamofire, no
-SwiftyJSON, no Sentry SDK, no Segment SDK.
+Anything declared in `GlomoPaySDK.podspec` becomes a **transitive pod in the
+merchant's Podfile**, where it can collide with their own version of the same
+library. CocoaPods has no isolation mechanism for that, and SwiftPM resolution has
+the same problem by a different route. So the bar is higher here than in an app and
+the default is to use the platform.
 
-Why: anything declared in `GlomoPaySDK.podspec` becomes a **transitive pod in the
-merchant's Podfile**, where it collides with the merchant's own version. CocoaPods
-has no isolation mechanism for this. The React Native SDK already hit this problem
-and solved it by calling Segment's REST API directly rather than using the native
-SDK, specifically to avoid "conflicts with merchant's own Segment implementation."
+It is **not** a ban. Hand-rolling a well-solved problem — especially a
+security-sensitive one — wastes time and usually produces something worse. Reach for
+a library when it genuinely earns its place.
 
-This SDK currently has zero pod dependencies and a `URLSession`-based API client.
-Keep it that way. If you believe a dependency is genuinely unavoidable, open a
-discussion before writing code. The answer is usually no.
+**No discussion needed:** Apple's own frameworks and the Swift standard library.
+This SDK currently uses Foundation, UIKit and WebKit with a `URLSession`-based API
+client, and has zero pod dependencies.
+
+**Propose before you build:** anything else. Raise it in the PR description, or in an
+issue if it's large, with a short case for why. A CODEOWNER approving the PR is what
+makes it accepted — so don't land a big piece of work that depends on a dependency
+nobody has agreed to yet.
+
+What reviewers will weigh:
+
+- Does the platform already do this acceptably?
+- Is the problem genuinely fiddly or security-sensitive — jailbreak/tamper detection,
+  cryptography, parsing untrusted input? Those favour a maintained library over our
+  own code.
+- Maintenance health: recent releases, responsive to CVEs, more than one contributor.
+- **License compatibility.** Must be redistributable under Apache-2.0 into
+  closed-source merchant apps. Anything copyleft (GPL / LGPL / AGPL) is a no.
+- Binary size and, if it ships as a static framework, symbol-collision risk.
+- Collision likelihood: how commonly do host apps already depend on this, and at what
+  versions?
+- Pin an exact version in the podspec and `Package.swift`, and keep the two in sync.
+
+**Still a hard no, regardless of review:**
+
+- Anything that collects data or phones home — analytics, crash reporting,
+  attribution, advertising. Those make us a data processor inside someone else's app,
+  and they are the category most likely to collide with what the merchant already
+  runs. The React Native SDK deliberately calls Segment's REST API rather than
+  bundling the native SDK, precisely to avoid "conflicts with merchant's own Segment
+  implementation" — that reasoning still holds.
+- Anything that touches card data, tokenization, or native 3DS. See the card-handling
+  rule above.
 
 ### HARD RULE — no customer data in this repository
 

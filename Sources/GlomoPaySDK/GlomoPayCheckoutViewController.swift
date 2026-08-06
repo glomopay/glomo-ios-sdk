@@ -15,7 +15,6 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     public var autoCloseOnConnectionError = true
 
     private let apiClient: GlomoPayApiClient
-    private let analytics: GlomoPayAnalytics
     private var webView: WKWebView!
     private var flowWebView: WKWebView?
     private var flowOverlay: UIView?
@@ -44,7 +43,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         self.requestedOrderType = orderType.lowercased()
         self.listener = listener
         self.apiClient = apiClient ?? GlomoPayApiClient(publicKey: config.publicKey, devMode: config.devMode)
-        self.analytics = GlomoPayAnalytics(devMode: config.devMode)
+        GlomoPayLogger.devMode = config.devMode
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .pageSheet
         if #available(iOS 15.0, *) {
@@ -61,22 +60,12 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     public override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
-        analytics.setCheckoutContext(
-            orderID: config.checkoutId,
-            publicKey: config.publicKey,
-            mockMode: ConfigManager.isTestOrMock(config.publicKey)
-        )
-        analytics.trackEvent("GlomoPay Checkout Session Started")
-        analytics.trackStartAttempt()
         eventRouter = GlomoPayEventRouter(
             listener: listener,
             devMode: config.devMode,
             onComplete: { [weak self] result in self?.handleResult(result) },
             onWindowOpen: { [weak self] url in self?.openFlow(url) },
-            onWindowClose: { [weak self] in self?.closeFlow() },
-            onAnalyticsEvent: { [weak self] name, properties in
-                self?.analytics.trackEvent(name, additionalProperties: properties)
-            }
+            onWindowClose: { [weak self] in self?.closeFlow() }
         )
         configureWebView()
         configureLoadingView()
@@ -217,7 +206,6 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private func startCheckout() {
         let errors = Validator.validate(config: config)
         guard errors.isEmpty else {
-            analytics.trackStartFailure(reason: errors.first?.message, errorCode: errors.first?.type.rawValue)
             deliverSdkErrors(errors)
             return
         }
@@ -230,7 +218,6 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             "isSimulator": compliance.isSimulator,
             "checksSkipped": compliance.checksSkipped,
         ])
-        analytics.setCheckoutContext(isJailbroken: compliance.isJailbroken)
         guard compliance.isCompliant else {
             let message = compliance.isDebuggerAttached
                 ? "Device is being debugged."
@@ -273,8 +260,6 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     @MainActor
     private func loadCheckout(url: URL, orderType: String) {
         currentURL = url
-        analytics.setCheckoutContext(checkoutURL: url.absoluteString, checkoutType: orderType)
-        analytics.trackStartSuccess()
         listener?.onEvent(name: "checkout.url_resolved", payload: ["url": url.absoluteString, "orderType": orderType])
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -621,7 +606,6 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         loadingView.isHidden = true
         progressView.isHidden = true
         listener?.onConnectionError(error)
-        analytics.trackConnectionError(error: error)
         listener?.onEvent(name: "connection.error", payload: [
             "type": error.type.rawValue,
             "message": error.message,
@@ -694,7 +678,6 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private func terminate(source: TerminationSource) {
         guard !didTerminate else { return }
         didTerminate = true
-        analytics.trackPaymentTerminate(source: source)
         listener?.onPaymentTerminate(source)
         listener?.onEvent(name: "checkout.closed", payload: ["source": source.rawValue])
         dismiss(animated: true)
@@ -702,7 +685,6 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
 
     private func deliverSdkErrors(_ errors: [SdkError]) {
         didTerminate = true
-        analytics.trackSdkError(errors: errors)
         listener?.onSdkError(errors)
         dismiss(animated: true)
     }

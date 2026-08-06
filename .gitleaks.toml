@@ -1,8 +1,8 @@
 # gitleaks configuration for the GlomoPay iOS SDK.
 #
-# Inherits all default gitleaks rules. The single allowlist below exists because
-# this SDK intentionally ships a publishable client-side key, and a scanner
-# cannot tell that apart from a leaked credential.
+# Inherits all default gitleaks rules. The single allowlist below covers a key
+# that is no longer in the working tree but is still present in git history, and
+# our workflow scans full history (`gitleaks git .` with `fetch-depth: 0`).
 #
 # Do not broaden this file to silence a new finding. If a scan fails, the default
 # assumption is that something genuinely leaked.
@@ -14,14 +14,22 @@ useDefault = true
 
 [[allowlists]]
 description = """
-Segment analytics write key. Publishable by design: it ships in every distributed
-build of every GlomoPay SDK (Flutter, React Native, iOS, Android), is present in
-the binary of every merchant app, and grants no read access to any data. It is the
-same class of key as the merchant's own publishable key. Rotating it would require
-a coordinated multi-SDK release and a merchant upgrade cycle for no security gain.
+Historical Segment analytics write key.
 
-Scoped to this one declaration in this one file, and requires BOTH the path and the
-line to match. See SECURITY.md, 'What is not a vulnerability'.
+The Segment integration was removed in #1, so this no longer appears in the
+working tree. It remains in git history (the first commit, and the 0.0.1 tag),
+and the secret-scan workflow scans every commit — so removing this entry fails CI
+on the historical commits rather than on anything current. Verified: without it
+the full-history scan fails; with it, it passes.
+
+The key was publishable by design — a Segment write key ships in every
+distributed build of every SDK that uses one, and grants no read access to any
+data. It is being rotated separately, which is what actually makes the historical
+value worthless. Once rotated, this entry can only go if the history is also
+rewritten; otherwise leave it.
+
+Scoped to the one declaration in the one file it used to live in, and requires
+BOTH the path and the line to match, so it cannot silently cover anything else.
 """
 condition = "AND"
 paths = ['''^Sources/GlomoPaySDK/Analytics/GlomoPayAnalytics\.swift$''']

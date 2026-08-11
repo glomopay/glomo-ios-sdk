@@ -79,10 +79,9 @@ This repo is **public**. Never commit, log, or paste into an issue or PR:
 Use synthetic fixtures and sandbox credentials. Push protection and a gitleaks
 scan run on every push, but they are a backstop, not permission to be careless.
 
-Note that the SDK accepts the merchant's **publishable key**, which is
-publishable by design and is not a secret. Everything else is.
-
-The SDK no longer embeds any analytics key. Do not add one.
+The SDK accepts the merchant's **publishable key**, which is publishable by
+design and is not a secret. Everything else is. The SDK does not embed an
+analytics key; do not add one.
 
 ### HARD RULE — releases and `pod trunk push` are internal-only
 
@@ -106,10 +105,9 @@ equivalent, so this is enforced by review.
 
 - **Default to `internal`.** Add `public` only when a merchant genuinely needs the
   symbol, and say why in the PR description.
-- Constants, config holders and bridge internals are `internal`. The removed
-  analytics layer exposed its write key as a `public` constant, which would have
-  made deleting it a breaking change had this SDK been past 1.0 — that is the
-  mistake to learn from, not repeat.
+- Constants, config holders, and bridge internals are `internal`. A public
+  constant becomes part of the merchant-facing API contract, so do not expose
+  implementation details that may need to be removed later.
 - Use `@_spi` if something must cross a module boundary without becoming public
   API.
 - The SDK stays on **0.x until GlomoPay freezes the API.** Propose breaking
@@ -117,20 +115,16 @@ equivalent, so this is enforced by review.
 
 ## 3. Apple platform requirements
 
-- **`PrivacyInfo.xcprivacy` is mandatory.** A payments SDK is on Apple's list of
-  commonly used third-party SDKs, so a privacy manifest is required regardless of
-  how little data we collect, and any required-reason API usage must be declared in
-  it. Without it, merchant app submissions are rejected with this SDK named in the
-  rejection. It must ship as a resource so it is collected into the merchant's app
-  privacy report. Note the SDK now sends no analytics anywhere, so the
-  collected-data section must reflect that rather than being copied from a sibling
-  SDK.
+- If data collection or required-reason API usage is introduced,
+  **`PrivacyInfo.xcprivacy` is mandatory** and must accurately declare it. The
+  manifest must ship as a resource so it is collected into the merchant app's
+  privacy report.
 - A payments SDK falls under Apple's **commonly used third-party SDK** signing
   requirement. Release artifacts must be signed.
 - Deployment target is **iOS 15.0**; Swift **5.9**. Do not raise either without
   raising it with GlomoPay first — it is a product decision affecting merchants.
 - Support both **SwiftPM** and **CocoaPods**. `Package.swift` and
-  `GlomoPaySDK.podspec` must stay in sync; a change to source layout affects both.
+  `glomo-ios-sdk.podspec` must stay in sync; a change to source layout affects both.
 - `spec.version` must always equal the git tag.
 
 ## 4. Behavioural parity

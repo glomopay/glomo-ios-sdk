@@ -2,13 +2,13 @@
 import PackageDescription
 
 let package = Package(
-    name: "GlomoPaySDK",
+    name: "glomo-ios-sdk",
     platforms: [
         .iOS(.v15),
         .macOS(.v10_15),
     ],
     products: [
-        .library(name: "GlomoPaySDK", targets: ["GlomoPaySDK"]),
+        .library(name: "glomo-ios-sdk", targets: ["GlomoPaySDK"]),
     ],
     targets: [
         .target(

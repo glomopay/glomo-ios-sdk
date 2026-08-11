@@ -1,5 +1,6 @@
 Pod::Spec.new do |spec|
-  spec.name         = "GlomoPaySDK"
+  spec.name         = "glomo-ios-sdk"
+  spec.module_name  = "GlomoPaySDK"
   spec.version      = "0.0.1"
   spec.summary      = "Native iOS SDK for GlomoPay checkout."
   spec.description  = <<-DESC
@@ -7,11 +8,11 @@ Pod::Spec.new do |spec|
     with a modal WKWebView, typed callbacks, device compliance checks, and
     Flutter-compatible payment events.
   DESC
-  spec.homepage     = "https://github.com/glomopay/glomopay-ios-sdk"
+  spec.homepage     = "https://github.com/glomopay/glomo-ios-sdk"
   spec.license      = { :type => "Apache-2.0", :file => "LICENSE" }
   spec.author       = { "GlomoPay" => "support@glomopay.com" }
   spec.source       = {
-    :git => "https://github.com/glomopay/glomopay-ios-sdk.git",
+    :git => "https://github.com/glomopay/glomo-ios-sdk.git",
     :tag => spec.version.to_s
   }
 

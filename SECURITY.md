@@ -19,14 +19,7 @@ checks are a deterrent, not a security boundary.
 
 ## What is not a vulnerability
 
-The SDK accepts the merchant's **publishable key**. It is publishable by design,
-is present in every distributed build, and grants no read access to any data.
-Reports about its visibility will be closed as intended behaviour.
-
-A Segment analytics write key was previously embedded in this SDK. It has been
-removed and is being rotated. It remains visible in git history and in the `0.0.1`
-tag — that is expected, and rotation is what addresses it; reports about the
-historical value are not vulnerabilities.
-
-The SDK sends no analytics or telemetry to any third party. `GlomoPayLogger`
-writes to the local console in developer mode only.
+The SDK accepts the merchant's **publishable key**, which is intended for
+client-side use and does not grant read access to merchant or payment data.
+Reports solely about the visibility of that publishable key will be closed as
+intended behaviour.

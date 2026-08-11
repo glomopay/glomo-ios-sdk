@@ -35,4 +35,4 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Lint podspec
-        run: pod lib lint GlomoPaySDK.podspec --allow-warnings --verbose
+        run: pod lib lint glomo-ios-sdk.podspec --allow-warnings --verbose

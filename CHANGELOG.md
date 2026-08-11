@@ -7,10 +7,16 @@ All notable changes to the GlomoPay iOS SDK are documented here.
 ### Added
 
 - Initial native Swift SDK package for iOS 15 and later.
-- CocoaPods specification with `GlomoPaySDK` version `0.0.1`.
+- CocoaPods specification with `glomo-ios-sdk` version `0.0.1`.
 - Swift Package Manager support through `Package.swift`.
 - Typed checkout configuration, payload, result, error, and listener contracts.
 - Native modal `WKWebView` checkout flow with loading, retry, navigation, and cancellation handling.
 - Standard and LRS checkout support with automatic order-based checkout detection.
 - JavaScript bridge and Flutter-compatible payment event routing.
 - Device compliance checks, local logging, and XCTest coverage.
+
+### Changed
+
+- Renamed the CocoaPods pod and Swift Package product to `glomo-ios-sdk` while
+  preserving the `GlomoPaySDK` Swift module and public API.
+- Updated distribution metadata and documentation for the new repository name.

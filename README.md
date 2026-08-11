@@ -1,4 +1,4 @@
-# GlomoPay iOS Swift SDK
+# Glomo iOS SDK
 
 Native Swift implementation of the GlomoPay checkout SDK. The public contract is intentionally aligned with the Flutter and Kotlin SDKs.
 
@@ -12,7 +12,7 @@ Add the GlomoPay pod to the application `Podfile`:
 platform :ios, '15.0'
 
 target 'YourApp' do
-  pod 'GlomoPaySDK', '0.0.1'
+  pod 'glomo-ios-sdk', '0.0.1'
 end
 ```
 
@@ -33,10 +33,11 @@ import GlomoPaySDK
 Add the Git repository URL in Xcode and select the `0.0.1` release tag:
 
 ```text
-https://github.com/mayankmatkar/glomopay-ios-sdk.git
+https://github.com/glomopay/glomo-ios-sdk.git
 ```
 
-The package product is named `GlomoPaySDK`.
+The package product is named `glomo-ios-sdk`. The Swift module remains
+`GlomoPaySDK`, so merchant applications continue to use `import GlomoPaySDK`.
 
 ## Current foundation
 
@@ -66,7 +67,7 @@ Open `Package.swift` in Xcode to build and run the package tests. For manual UI 
 
 ## Release versioning
 
-Keep the same version in `GlomoPaySDK.podspec`, `CHANGELOG.md`, and the Git release tag. For version `0.0.1`:
+Keep the same version in `glomo-ios-sdk.podspec`, `CHANGELOG.md`, and the Git release tag. For version `0.0.1`:
 
 ```bash
 git tag 0.0.1

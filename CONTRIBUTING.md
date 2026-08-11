@@ -25,7 +25,7 @@ one, stop and raise it.
 The SDK depends on Foundation, UIKit, and WebKit only. No Alamofire, no
 SwiftyJSON, no Sentry SDK, no Segment SDK.
 
-Why: anything declared in `GlomoPaySDK.podspec` becomes a **transitive pod in the
+Why: anything declared in `glomo-ios-sdk.podspec` becomes a **transitive pod in the
 merchant's Podfile**, where it collides with the merchant's own version. CocoaPods
 has no isolation mechanism for this. The React Native SDK already hit this problem
 and solved it by calling Segment's REST API directly rather than using the native
@@ -95,7 +95,7 @@ equivalent, so this is enforced by review.
 - Deployment target is **iOS 15.0**; Swift **5.9**. Do not raise either without
   raising it with GlomoPay first — it is a product decision affecting merchants.
 - Support both **SwiftPM** and **CocoaPods**. `Package.swift` and
-  `GlomoPaySDK.podspec` must stay in sync; a change to source layout affects both.
+  `glomo-ios-sdk.podspec` must stay in sync; a change to source layout affects both.
 - `spec.version` must always equal the git tag.
 
 ## 4. Behavioural parity

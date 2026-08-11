@@ -22,14 +22,12 @@ one, stop and raise it.
 
 ### HARD RULE — no third-party dependencies
 
-The SDK depends on Foundation, UIKit, and WebKit only. No Alamofire, no
-SwiftyJSON, no Sentry SDK, no Segment SDK.
+The SDK depends on Foundation, UIKit, and WebKit only. Do not add third-party
+networking, JSON, analytics, crash-reporting, or telemetry SDKs.
 
 Why: anything declared in `glomo-ios-sdk.podspec` becomes a **transitive pod in the
 merchant's Podfile**, where it collides with the merchant's own version. CocoaPods
-has no isolation mechanism for this. The React Native SDK already hit this problem
-and solved it by calling Segment's REST API directly rather than using the native
-SDK, specifically to avoid "conflicts with merchant's own Segment implementation."
+has no isolation mechanism for this.
 
 This SDK currently has zero pod dependencies and a `URLSession`-based API client.
 Keep it that way. If you believe a dependency is genuinely unavoidable, open a
@@ -48,9 +46,9 @@ This repo is **public**. Never commit, log, or paste into an issue or PR:
 Use synthetic fixtures and sandbox credentials. Push protection and a gitleaks
 scan run on every push, but they are a backstop, not permission to be careless.
 
-Note that the SDK legitimately ships a Segment **write key** and accepts the
-merchant's **publishable key**. Both are publishable by design and are not
-secrets. Everything else is.
+The SDK accepts the merchant's **publishable key**, which is publishable by
+design and is not a secret. Everything else is. The SDK does not embed an
+analytics key; do not add one.
 
 ### HARD RULE — releases and `pod trunk push` are internal-only
 
@@ -74,10 +72,9 @@ equivalent, so this is enforced by review.
 
 - **Default to `internal`.** Add `public` only when a merchant genuinely needs the
   symbol, and say why in the PR description.
-- Constants, config holders, analytics plumbing, and bridge internals are
-  `internal`. `GlomoPayAnalytics.defaultWriteKey` is currently `public`, which
-  makes removing it a breaking change — that is the mistake to learn from, not
-  copy.
+- Constants, config holders, and bridge internals are `internal`. A public
+  constant becomes part of the merchant-facing API contract, so do not expose
+  implementation details that may need to be removed later.
 - Use `@_spi` if something must cross a module boundary without becoming public
   API.
 - The SDK stays on **0.x until GlomoPay freezes the API.** Propose breaking
@@ -85,11 +82,10 @@ equivalent, so this is enforced by review.
 
 ## 3. Apple platform requirements
 
-- **`PrivacyInfo.xcprivacy` is mandatory.** The SDK collects analytics and device
-  information, so it needs a privacy manifest declaring collected data types and
-  required-reason API usage. Without it, merchant app submissions are rejected with
-  this SDK named in the rejection. It must ship as a resource so it is collected
-  into the merchant's app privacy report.
+- If data collection or required-reason API usage is introduced,
+  **`PrivacyInfo.xcprivacy` is mandatory** and must accurately declare it. The
+  manifest must ship as a resource so it is collected into the merchant app's
+  privacy report.
 - A payments SDK falls under Apple's **commonly used third-party SDK** signing
   requirement. Release artifacts must be signed.
 - Deployment target is **iOS 15.0**; Swift **5.9**. Do not raise either without

@@ -14,9 +14,13 @@ All notable changes to the GlomoPay iOS SDK are documented here.
 - Standard and LRS checkout support with automatic order-based checkout detection.
 - JavaScript bridge and Flutter-compatible payment event routing.
 - Device compliance checks, local logging, and XCTest coverage.
+- Direct Mixpanel REST analytics implementing the shared 38-event native SDK contract.
+- Isolated Sentry reporting for explicitly captured SDK and analytics failures.
+- Analytics PII filtering, bank redirect URL origin sanitization, and privacy manifest.
 
 ### Changed
 
 - Renamed the CocoaPods pod and Swift Package product to `glomo-ios-sdk` while
   preserving the `GlomoPaySDK` Swift module and public API.
 - Updated distribution metadata and documentation for the new repository name.
+- Analytics failures are fire-and-forget and cannot interrupt the checkout journey.

@@ -1,7 +1,7 @@
 import Foundation
 
 enum AnalyticsSanitizer {
-    private static let blockedKey = try! NSRegularExpression(
+    private static let blockedKey = makeExpression(
         pattern: "email|phone|mobile|customer_name|card|pan|account|aadhaar|passport|voter|kyc",
         options: [.caseInsensitive]
     )
@@ -11,8 +11,8 @@ enum AnalyticsSanitizer {
         "(?<![A-Za-z0-9_])[A-Z]{5}[0-9]{4}[A-Z](?![A-Za-z0-9_])",
         "(?<![A-Za-z0-9_])[A-Z][0-9]{7}(?![A-Za-z0-9_])",
         "(?<![A-Za-z0-9_])[A-Z]{3}[0-9]{7}(?![A-Za-z0-9_])",
-    ].map { try! NSRegularExpression(pattern: $0, options: [.caseInsensitive]) }
-    private static let isoTimestamp = try! NSRegularExpression(
+    ].compactMap { makeExpression(pattern: $0, options: [.caseInsensitive]) }
+    private static let isoTimestamp = makeExpression(
         pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}(?:Z|[+-]\\d{2}:?\\d{2})$"
     )
 
@@ -83,7 +83,20 @@ enum AnalyticsSanitizer {
             .joined(separator: "/")
     }
 
-    private static func matches(_ expression: NSRegularExpression, _ value: String) -> Bool {
-        expression.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)) != nil
+    private static func makeExpression(
+        pattern: String,
+        options: NSRegularExpression.Options = []
+    ) -> NSRegularExpression? {
+        do {
+            return try NSRegularExpression(pattern: pattern, options: options)
+        } catch {
+            GlomoPayLogger.error("Analytics sanitizer pattern could not be compiled", error: error)
+            return try? NSRegularExpression(pattern: "(?!)")
+        }
+    }
+
+    private static func matches(_ expression: NSRegularExpression?, _ value: String) -> Bool {
+        guard let expression else { return false }
+        return expression.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)) != nil
     }
 }

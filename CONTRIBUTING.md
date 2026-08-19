@@ -47,8 +47,10 @@ Use synthetic fixtures and sandbox credentials. Push protection and a gitleaks
 scan run on every push, but they are a backstop, not permission to be careless.
 
 The SDK accepts the merchant's **publishable key**, which is publishable by
-design and is not a secret. Everything else is. The SDK does not embed an
-analytics key; do not add one.
+design and is not a secret. Release-approved Mixpanel project tokens and Sentry
+DSNs are also client-side identifiers and are generated only into the scoped SDK
+telemetry resource. Never add Sentry auth tokens, symbol-upload credentials, or
+unapproved analytics credentials.
 
 ### HARD RULE — releases and `pod trunk push` are internal-only
 

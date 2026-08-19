@@ -22,6 +22,7 @@ let package = Package(
             path: "Sources/GlomoPaySDK",
             resources: [
                 .process("Resources/PrivacyInfo.xcprivacy"),
+                .process("Resources/GlomoPayTelemetryConfiguration.plist"),
             ]
         ),
         .testTarget(

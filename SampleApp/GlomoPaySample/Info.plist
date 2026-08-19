@@ -18,10 +18,6 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<key>GLOMOPAY_MIXPANEL_TOKEN</key>
-	<string>$(GLOMOPAY_MIXPANEL_TOKEN)</string>
-	<key>GLOMOPAY_SENTRY_DSN</key>
-	<string>$(GLOMOPAY_SENTRY_DSN)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchScreen</key>

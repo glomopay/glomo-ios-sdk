@@ -66,19 +66,11 @@ The package product is named `glomo-ios-sdk`. The Swift module remains
 
 ## Analytics and diagnostics configuration
 
-The SDK reads its Glomo-owned integration values from the host application's resolved
-`Info.plist`. Keep the actual values outside source control and expose them through build
-settings:
-
-```xml
-<key>GLOMOPAY_MIXPANEL_TOKEN</key>
-<string>$(MIXPANEL_TOKEN)</string>
-<key>GLOMOPAY_SENTRY_DSN</key>
-<string>$(SENTRY_DSN)</string>
-```
-
-For local command-line testing, the same names may be supplied as environment variables.
-Blank or missing values select no-op implementations and never block checkout.
+The SDK bundles its Glomo-owned Mixpanel project token and Sentry DSN in an SDK resource.
+Merchant applications do not add either value to their `Info.plist`, build settings, or CI.
+For local SDK development only, `GLOMOPAY_MIXPANEL_TOKEN` and `GLOMOPAY_SENTRY_DSN`
+environment variables can override the bundled values. Blank or missing bundled values select
+no-op implementations and never block checkout.
 
 Mixpanel uses the REST `/track` endpoint rather than the native Mixpanel SDK. Analytics
 requests are asynchronous, use a 10-second timeout, and are never retried during checkout.
@@ -98,6 +90,20 @@ See the [sample app guide](SampleApp/README.md) for run and optional analytics c
 ## Release versioning
 
 Keep the same version in `glomo-ios-sdk.podspec`, `CHANGELOG.md`, and the Git release tag. For version `0.0.1`:
+
+Generate the SDK-owned telemetry resource from the release environment before creating the
+tag. The script also accepts `MIXPANEL_TOKEN` and `SENTRY_DSN` aliases:
+
+```bash
+GLOMOPAY_MIXPANEL_TOKEN="$MIXPANEL_TOKEN" \
+GLOMOPAY_SENTRY_DSN="$SENTRY_DSN" \
+./scripts/generate-telemetry-config.sh
+```
+
+Confirm that `Sources/GlomoPaySDK/Resources/GlomoPayTelemetryConfiguration.plist` contains
+the release values. Because SPM and CocoaPods distribute this repository's tagged source,
+the generated resource must be included in the release tag. Never place a Sentry auth token
+or symbol-upload credential in this file.
 
 ```bash
 git tag 0.0.1

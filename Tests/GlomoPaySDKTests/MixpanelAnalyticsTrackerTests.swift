@@ -57,16 +57,45 @@ final class MixpanelAnalyticsTrackerTests: XCTestCase {
         let configured = SDKRuntimeConfiguration.load(environment: [
             "GLOMOPAY_MIXPANEL_TOKEN": " token ",
             "GLOMOPAY_SENTRY_DSN": " dsn ",
-        ])
+        ], bundledValues: [:])
         let blank = SDKRuntimeConfiguration.load(environment: [
             "GLOMOPAY_MIXPANEL_TOKEN": "  ",
             "GLOMOPAY_SENTRY_DSN": "",
-        ])
+        ], bundledValues: [:])
 
         XCTAssertEqual(configured.mixpanelToken, "token")
         XCTAssertEqual(configured.sentryDSN, "dsn")
         XCTAssertNil(blank.mixpanelToken)
         XCTAssertNil(blank.sentryDSN)
+    }
+
+    func testRuntimeConfigurationFallsBackToSDKOwnedValues() {
+        let configuration = SDKRuntimeConfiguration.load(
+            environment: [:],
+            bundledValues: [
+                "GLOMOPAY_MIXPANEL_TOKEN": " bundled-token ",
+                "GLOMOPAY_SENTRY_DSN": " bundled-dsn ",
+            ]
+        )
+
+        XCTAssertEqual(configuration.mixpanelToken, "bundled-token")
+        XCTAssertEqual(configuration.sentryDSN, "bundled-dsn")
+    }
+
+    func testRuntimeConfigurationAllowsLocalEnvironmentOverride() {
+        let configuration = SDKRuntimeConfiguration.load(
+            environment: [
+                "GLOMOPAY_MIXPANEL_TOKEN": "local-token",
+                "GLOMOPAY_SENTRY_DSN": "local-dsn",
+            ],
+            bundledValues: [
+                "GLOMOPAY_MIXPANEL_TOKEN": "bundled-token",
+                "GLOMOPAY_SENTRY_DSN": "bundled-dsn",
+            ]
+        )
+
+        XCTAssertEqual(configuration.mixpanelToken, "local-token")
+        XCTAssertEqual(configuration.sentryDSN, "local-dsn")
     }
 }
 

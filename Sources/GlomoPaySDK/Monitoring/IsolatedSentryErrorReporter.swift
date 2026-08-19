@@ -42,7 +42,7 @@ final class IsolatedSentryErrorReporter: SDKErrorReporting {
     }
 
     func capture(operation: String, error: Error, context: [String: Any?]) {
-        let state: (String, [Breadcrumb]) = lock.withCriticalScope { (flowType, breadcrumbs) }
+        let state: (String, [Breadcrumb]) = lock.withLock { (flowType, breadcrumbs) }
         let event = Event(level: .error)
         event.message = SentryMessage(formatted: "\(AnalyticsSanitizer.text(operation, limit: 80)) failed (\(type(of: error)))")
         event.logger = "com.glomopay.sdk.ios"
@@ -77,13 +77,5 @@ enum SDKErrorReporterFactory {
             initialFlowType: flowType,
             devMode: config.devMode
         )
-    }
-}
-
-private extension NSLock {
-    func withCriticalScope<T>(_ body: () -> T) -> T {
-        lock()
-        defer { unlock() }
-        return body()
     }
 }

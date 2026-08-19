@@ -14,16 +14,15 @@ useDefault = true
 
 [[allowlists]]
 description = """
-Segment analytics write key. Publishable by design: it ships in every distributed
-build of every GlomoPay SDK (Flutter, React Native, iOS, Android), is present in
-the binary of every merchant app, and grants no read access to any data. It is the
-same class of key as the merchant's own publishable key. Rotating it would require
-a coordinated multi-SDK release and a merchant upgrade cycle for no security gain.
-
-Scoped to this one declaration in this one file, and requires BOTH the path and the
-line to match. See SECURITY.md, 'What is not a vulnerability'.
+Release-approved Mixpanel project token and Sentry DSN. Both are publishable
+client-side identifiers bundled in merchant applications and grant no read or
+administrative access. This exception is restricted to the generated SDK-owned
+telemetry resource; Sentry auth tokens and upload credentials remain forbidden.
 """
 condition = "AND"
-paths = ['''^Sources/GlomoPaySDK/Analytics/GlomoPayAnalytics\.swift$''']
+paths = ['''^Sources/GlomoPaySDK/Resources/GlomoPayTelemetryConfiguration\.plist$''']
 regexTarget = "line"
-regexes = ['''defaultWriteKey\s*=\s*"[A-Za-z0-9]{32}"''']
+regexes = [
+  '''<string>[A-Fa-f0-9]{32}</string>''',
+  '''<string>https://[A-Fa-f0-9]+@[^<]+\.sentry\.io/[0-9]+</string>'''
+]

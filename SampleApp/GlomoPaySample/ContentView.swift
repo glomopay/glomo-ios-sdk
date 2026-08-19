@@ -4,7 +4,7 @@ struct ContentView: View {
     @StateObject private var model = CheckoutSampleViewModel()
 
     var body: some View {
-        NavigationStack {
+        NavigationView {
             Form {
                 Section("Checkout credentials") {
                     TextField("Enter public key", text: $model.publicKey)
@@ -52,6 +52,7 @@ struct ContentView: View {
                 model.setPresenter(controller)
             })
         }
+        .navigationViewStyle(.stack)
     }
 }
 

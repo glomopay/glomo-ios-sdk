@@ -2,10 +2,16 @@
 
 ## Runtime configuration
 
-The SDK reads `GLOMOPAY_MIXPANEL_TOKEN` and `GLOMOPAY_SENTRY_DSN` from the resolved
-application `Info.plist`, with process environment variables supported for local tests.
-Values must be injected through the release build or CI secret store and must not be
-committed to this repository.
+The SDK reads its Mixpanel project token and Sentry DSN from the SDK-owned
+`GlomoPayTelemetryConfiguration.plist` resource. Merchant applications do not configure
+these values in their `Info.plist`, build settings, or CI. The resource is packaged by both
+SwiftPM and CocoaPods.
+
+Release maintainers generate the resource with `scripts/generate-telemetry-config.sh` using
+shell environment variables before creating the release tag. Local SDK development can
+override bundled values with `GLOMOPAY_MIXPANEL_TOKEN` and `GLOMOPAY_SENTRY_DSN` environment
+variables. A host `Info.plist` value remains a backward-compatible development override, but
+is not part of merchant integration.
 
 If either value is absent, only that integration becomes a no-op. Checkout behavior is
 unchanged.

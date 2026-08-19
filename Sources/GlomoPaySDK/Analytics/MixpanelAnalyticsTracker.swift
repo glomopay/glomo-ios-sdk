@@ -121,6 +121,10 @@ final class MixpanelHTTPTransport: AnalyticsTransporting {
         }
     }
 
+    deinit {
+        session.invalidateAndCancel()
+    }
+
     func send(_ event: AnalyticsEvent) async throws {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
@@ -169,13 +173,5 @@ enum AnalyticsFactory {
             errorReporter: errorReporter,
             deviceProperties: properties
         )
-    }
-}
-
-private extension NSLock {
-    func withLock<T>(_ body: () -> T) -> T {
-        lock()
-        defer { unlock() }
-        return body()
     }
 }

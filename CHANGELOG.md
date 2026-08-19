@@ -24,3 +24,5 @@ All notable changes to the GlomoPay iOS SDK are documented here.
   preserving the `GlomoPaySDK` Swift module and public API.
 - Updated distribution metadata and documentation for the new repository name.
 - Analytics failures are fire-and-forget and cannot interrupt the checkout journey.
+- Mixpanel and Sentry client configuration is bundled by the SDK, so merchants do not add
+  telemetry values to their application `Info.plist`.

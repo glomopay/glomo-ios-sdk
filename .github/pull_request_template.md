@@ -13,8 +13,10 @@
       contents in code, tests, fixtures, screenshots, or the description.
 - [ ] No credentials — no API keys, tokens, certificates, provisioning profiles, or
       signing material. Sandbox keys only in tests.
-- [ ] No new third-party dependencies. (See CONTRIBUTING.md — this is a hard rule.
-      If you believe one is unavoidable, stop and open a discussion first.)
+- [ ] Any new third-party dependency is called out above with a short case for it,
+      and is not in the "hard no" categories (data collection / phones home, or
+      anything touching card data). Apple frameworks and the Swift stdlib need no
+      justification. See CONTRIBUTING.md.
 - [ ] Public API changes are intentional and minimal. New `public` symbols are
       justified in the description; anything internal is marked `internal`.
 - [ ] No card entry, tokenization, or PAN handling added. (See CONTRIBUTING.md.)

@@ -17,7 +17,7 @@ let package = Package(
         .target(
             name: "GlomoPaySDK",
             dependencies: [
-                .product(name: "Sentry-Dynamic", package: "sentry-cocoa"),
+                .product(name: "Sentry", package: "sentry-cocoa"),
             ],
             path: "Sources/GlomoPaySDK",
             resources: [

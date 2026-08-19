@@ -89,9 +89,11 @@ network, session, or app-wide crash instrumentation.
 See [Analytics and monitoring integration](docs/integration.md) for the event identity,
 privacy boundaries, dependency compatibility, and release-build requirements.
 
-## Package tests and UI testing
+## Package tests and sample app
 
-Open `Package.swift` in Xcode to build and run the package tests. For manual UI integration testing, use the standalone [iOS SDK test app](../glomopay-ios-sdk-test-app/README.md), which consumes this package through a local package dependency.
+Open `Package.swift` in Xcode to build and run the package tests. For manual UI integration testing, open [`SampleApp/GlomoPaySample.xcodeproj`](SampleApp/GlomoPaySample.xcodeproj). The sample app consumes this repository through a local Swift package reference and demonstrates validation, automatic checkout-type detection, native checkout presentation, callbacks, and bridge events.
+
+See the [sample app guide](SampleApp/README.md) for run and optional analytics configuration instructions.
 
 ## Release versioning
 

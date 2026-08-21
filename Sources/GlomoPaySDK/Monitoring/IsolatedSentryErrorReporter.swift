@@ -57,6 +57,10 @@ final class IsolatedSentryErrorReporter: SDKErrorReporting {
         _ = client?.capture(event: event)
     }
 
+    func flush(timeout: TimeInterval) {
+        client?.flush(timeout: timeout)
+    }
+
     private func safeContext(_ context: [String: Any?]) -> [String: Any] {
         let allowed = Set(["event_name", "error_type", "status_code", "webview_type", "source", "fallback_type"])
         return AnalyticsSanitizer.properties(context).filter { allowed.contains($0.key) }

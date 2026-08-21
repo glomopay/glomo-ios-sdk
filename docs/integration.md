@@ -52,6 +52,18 @@ SDK and analytics-delivery failures are submitted with sanitized, allow-listed c
 Merchants already using an incompatible Sentry major version must align their dependency
 resolution with Sentry Cocoa 8.x before integrating this SDK.
 
+### Manual Sentry delivery verification
+
+Release maintainers can send one sanitized synthetic SDK error through the isolated client:
+
+```bash
+GLOMOPAY_RUN_SENTRY_DELIVERY_TEST=1 \
+swift test --filter IsolatedSentryDeliveryTests/testManualSDKErrorDelivery
+```
+
+The test is skipped during normal test runs and does not initialize global Sentry. Confirm the
+`manual_sentry_delivery_test` event in the GlomoPay iOS SDK Sentry project after it completes.
+
 ## Symbols
 
 Because the SDK is source-distributed, its release symbols are part of the merchant app's

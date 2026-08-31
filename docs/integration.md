@@ -39,7 +39,15 @@ fragment are removed.
 
 The SDK does not collect customer names, email addresses, phone numbers, PAN/card data, bank
 account numbers, or KYC document contents. The bundled `PrivacyInfo.xcprivacy` declares
-product-interaction analytics and SDK diagnostic data, with tracking disabled.
+product-interaction analytics, SDK diagnostic data, and device performance data, with tracking
+disabled.
+
+At checkout invocation, the SDK collects one diagnostic performance snapshot and attaches it
+only to the existing `SDK Initialized` Mixpanel event. The snapshot can include battery level
+and state, Low Power Mode, thermal state, physical memory, process memory, jetsam headroom, and
+active processor count. Collection is fail-open, does not delay checkout, does not require a
+merchant permission or entitlement, and is not used for user tracking. Unknown values are sent
+as null. The SDK does not continuously sample device performance.
 
 ## Isolated Sentry client
 

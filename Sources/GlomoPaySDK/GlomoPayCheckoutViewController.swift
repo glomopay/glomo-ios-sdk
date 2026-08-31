@@ -30,6 +30,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private var currentURL: URL?
     private var didRetryMainDocument = false
     private var didTerminate = false
+    private var didTrackSDKInitialization = false
     private var progressObservation: NSKeyValueObservation?
     private var bridgeHandler: GlomoPayJavaScriptBridge?
     private var flowBridgeHandler: GlomoPayJavaScriptBridge?
@@ -224,7 +225,13 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     }
 
     private func startCheckout() {
-        analytics.track(AnalyticsEventName.sdkInitialized)
+        if !didTrackSDKInitialization {
+            didTrackSDKInitialization = true
+            analytics.track(
+                AnalyticsEventName.sdkInitialized,
+                properties: DevicePerformanceSnapshot.collect()
+            )
+        }
         let errors = Validator.validate(config: config)
         guard errors.isEmpty else {
             analytics.track(AnalyticsEventName.sdkValidationFailed, properties: [

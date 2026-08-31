@@ -53,6 +53,32 @@ final class MixpanelAnalyticsTrackerTests: XCTestCase {
         XCTAssertEqual(properties["subscription_id"] as? String, "sub_123")
     }
 
+    func testSDKInitializedIncludesPerformanceSnapshotProperties() async throws {
+        let transport = RecordingAnalyticsTransport()
+        let tracker = MixpanelAnalyticsTracker(
+            config: GlomoPayConfig(publicKey: "test_public_key", orderId: "order_123"),
+            sessionID: "session-uuid",
+            sdkVersion: "1.0.0",
+            initialFlowType: "auto",
+            transport: transport,
+            errorReporter: NoOpSDKErrorReporter(),
+            deviceProperties: { [:] }
+        )
+
+        tracker.track(AnalyticsEventName.sdkInitialized, properties: [
+            "perf_snapshot_at": "sdk_initialized",
+            "battery_level_percent": 42,
+            "thermal_state": "serious",
+            "ram_available_bytes": Int64(120_000_000),
+        ])
+
+        let properties = try await transport.nextEvent().properties
+        XCTAssertEqual(properties["perf_snapshot_at"] as? String, "sdk_initialized")
+        XCTAssertEqual(properties["battery_level_percent"] as? Int, 42)
+        XCTAssertEqual(properties["thermal_state"] as? String, "serious")
+        XCTAssertEqual(properties["ram_available_bytes"] as? Int64, 120_000_000)
+    }
+
     func testRuntimeConfigurationTrimsValuesAndDisablesBlankConfiguration() {
         let configured = SDKRuntimeConfiguration.load(environment: [
             "GLOMOPAY_MIXPANEL_TOKEN": " token ",

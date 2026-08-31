@@ -17,6 +17,7 @@ All notable changes to the GlomoPay iOS SDK are documented here.
 - Direct Mixpanel REST analytics implementing the shared 38-event native SDK contract.
 - Isolated Sentry reporting for explicitly captured SDK and analytics failures.
 - Analytics PII filtering, bank redirect URL origin sanitization, and privacy manifest.
+- One-time iOS device performance snapshot on `SDK Initialized` for checkout reliability diagnostics.
 
 ### Changed
 

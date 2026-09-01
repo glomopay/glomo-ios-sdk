@@ -23,7 +23,6 @@ The implementation sends the shared 38-event native SDK contract directly to
 
 - `distinct_id` is the order ID.
 - `session_id` is a UUID generated once per checkout invocation.
-- `$insert_id` equals `session_id` for event deduplication.
 - `sdk_source`, `platform`, and `surface` are `glomo-ios-sdk`, `ios`, and `ios-sdk`.
 - Subscription checkouts preserve a null `order_id` and `distinct_id` rather than inventing an identity.
 - Requests are asynchronous, have a 10-second timeout, and do not retry.

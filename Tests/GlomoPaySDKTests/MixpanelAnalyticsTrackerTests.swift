@@ -24,7 +24,7 @@ final class MixpanelAnalyticsTrackerTests: XCTestCase {
         let event = try await transport.nextEvent()
         XCTAssertEqual(event.properties["distinct_id"] as? String, "order_123")
         XCTAssertEqual(event.properties["session_id"] as? String, "session-uuid")
-        XCTAssertEqual(event.properties["$insert_id"] as? String, "session-uuid")
+        XCTAssertNil(event.properties["$insert_id"])
         XCTAssertEqual(event.properties["flow_type"] as? String, "lrs")
         XCTAssertEqual(event.properties["surface"] as? String, "ios-sdk")
         XCTAssertEqual(event.properties["platform"] as? String, "ios")

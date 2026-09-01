@@ -69,7 +69,6 @@ final class MixpanelAnalyticsTracker: AnalyticsTracking {
             "time": Int64(date.timeIntervalSince1970 * 1_000),
             "timestamp": Self.formattedTimestamp(date),
             "session_id": sessionID,
-            "$insert_id": sessionID,
             "distinct_id": config.orderId,
         ]) { _, new in new }
         common.merge(properties) { _, new in new }

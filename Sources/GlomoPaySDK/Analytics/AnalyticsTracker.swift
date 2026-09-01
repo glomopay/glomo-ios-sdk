@@ -52,7 +52,8 @@ enum AnalyticsEventName {
     static let educationStepsShown = "Education Steps Shown"
     static let educationStepsFailed = "Education Steps Failed"
     static let fileUploadRequested = "File Upload Requested"
-    static let filePermissionDenied = "File Permission Denied"
+    // TODO: Restore this event if iOS introduces a permission-gated file picker flow.
+    // static let filePermissionDenied = "File Permission Denied"
     static let filePickerError = "File Picker Error"
     static let iOSDocumentRetry = "iOS Document Retry"
     static let consoleLogCaptured = "Console Log Captured"

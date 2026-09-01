@@ -49,7 +49,7 @@ The package product is named `glomo-ios-sdk`. The Swift module remains
 - Dedicated `Bridge` layer for WKScriptMessageHandler, injection scripts, and Flutter/Kotlin-compatible event routing
 - Isolated `Security` layer for jailbreak/debugger checks with Flutter/Kotlin strict-mode policy
 - Local, developer-mode logging through `GlomoPayLogger`
-- Direct Mixpanel REST analytics with the shared native 38-event contract, PII filtering, and bank URL sanitization
+- Direct Mixpanel REST analytics with the shared native event contract, PII filtering, and bank URL sanitization
 - Isolated Sentry error reporting for SDK/analytics failures without global `SentrySDK.start` initialization
 - Bundled privacy manifest covering analytics and SDK diagnostics
 - Shared JavaScript injection contract for the upcoming `WKWebView` bridge

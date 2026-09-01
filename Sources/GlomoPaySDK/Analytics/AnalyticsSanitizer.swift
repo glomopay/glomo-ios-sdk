@@ -1,20 +1,34 @@
 import Foundation
 
 enum AnalyticsSanitizer {
+    private static let identifierKeys: Set<String> = [
+        "session_id",
+        "$insert_id",
+        "distinct_id",
+        "order_id",
+        "subscription_id",
+        "public_key",
+        "sdk_version",
+        "timestamp",
+    ]
     private static let blockedKey = makeExpression(
         pattern: "email|phone|mobile|customer_name|card|pan|account|aadhaar|passport|voter|kyc",
         options: [.caseInsensitive]
     )
-    private static let patterns = [
+    private static let structuredSensitiveValuePatterns = [
+        "^[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}$",
+        "^(?:\\d[\\s-]*){6,}$",
+        "^[A-Z]{5}[0-9]{4}[A-Z]$",
+        "^[A-Z][0-9]{7}$",
+        "^[A-Z]{3}[0-9]{7}$",
+    ].compactMap { makeExpression(pattern: $0, options: [.caseInsensitive]) }
+    private static let freeTextPatterns = [
         "[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}",
         "(?<![A-Za-z0-9_])(?:\\d[\\s-]*){6,}(?![A-Za-z0-9_])",
         "(?<![A-Za-z0-9_])[A-Z]{5}[0-9]{4}[A-Z](?![A-Za-z0-9_])",
         "(?<![A-Za-z0-9_])[A-Z][0-9]{7}(?![A-Za-z0-9_])",
         "(?<![A-Za-z0-9_])[A-Z]{3}[0-9]{7}(?![A-Za-z0-9_])",
     ].compactMap { makeExpression(pattern: $0, options: [.caseInsensitive]) }
-    private static let isoTimestamp = makeExpression(
-        pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}(?:Z|[+-]\\d{2}:?\\d{2})$"
-    )
 
     static func properties(_ input: [String: Any?]) -> [String: Any] {
         input.reduce(into: [String: Any]()) { output, item in
@@ -23,8 +37,12 @@ enum AnalyticsSanitizer {
                 output[item.key] = NSNull()
                 return
             }
-            if item.key == "timestamp", let timestamp = value as? String, matches(isoTimestamp, timestamp) {
-                output[item.key] = timestamp
+            if identifierKeys.contains(item.key) {
+                if let safe = sanitizeIdentifier(value) { output[item.key] = safe }
+                return
+            }
+            if let string = value as? String,
+               structuredSensitiveValuePatterns.contains(where: { matches($0, string) }) {
                 return
             }
             if let safe = sanitize(value) { output[item.key] = safe }
@@ -64,13 +82,26 @@ enum AnalyticsSanitizer {
         case let value as Double: return value
         case let value as Float: return value
         case let value as NSNumber: return value
-        case let value as String: return text(value, limit: 1_000)
+        case let value as String: return String(value.prefix(1_000))
         default: return text(String(describing: value), limit: 1_000)
         }
     }
 
+    private static func sanitizeIdentifier(_ value: Any) -> Any? {
+        switch value {
+        case let value as String: return value
+        case let value as Bool: return value
+        case let value as Int: return value
+        case let value as Int64: return value
+        case let value as Double: return value
+        case let value as Float: return value
+        case let value as NSNumber: return value
+        default: return nil
+        }
+    }
+
     private static func redact(_ value: String) -> String {
-        patterns.reduce(value) { current, pattern in
+        freeTextPatterns.reduce(value) { current, pattern in
             let range = NSRange(current.startIndex..., in: current)
             return pattern.stringByReplacingMatches(in: current, range: range, withTemplate: "[REDACTED]")
         }

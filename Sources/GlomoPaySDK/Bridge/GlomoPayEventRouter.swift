@@ -93,6 +93,9 @@ final class GlomoPayEventRouter {
             ])
             emit("file.requested", envelope)
         default:
+            analytics.track(AnalyticsEventName.unsupportedFunctionalityUsed, properties: [
+                "name": type,
+            ])
             emit(type, envelope)
         }
     }

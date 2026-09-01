@@ -18,7 +18,7 @@ unchanged.
 
 ## Mixpanel contract
 
-The implementation sends the shared 38-event native SDK contract directly to
+The implementation sends the shared native SDK event contract directly to
 `https://api.mixpanel.com/track?ip=1` using an ephemeral `URLSession`:
 
 - `distinct_id` is the order ID.

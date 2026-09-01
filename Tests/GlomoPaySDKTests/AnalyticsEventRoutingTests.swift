@@ -41,31 +41,71 @@ final class AnalyticsEventRoutingTests: XCTestCase {
         ])
     }
 
-    func testAnalyticsContractContainsThirtyEightDistinctEvents() {
-        let names = [
-            AnalyticsEventName.sdkInitialized, AnalyticsEventName.sdkValidationFailed,
-            AnalyticsEventName.deviceComplianceChecked, AnalyticsEventName.deviceComplianceBlocked,
-            AnalyticsEventName.orderTypeDetectionStarted, AnalyticsEventName.orderTypeResolved,
-            AnalyticsEventName.orderTypeDetectionFailed, AnalyticsEventName.checkoutStarted,
-            AnalyticsEventName.checkoutURLResolved, AnalyticsEventName.navigationStarted,
-            AnalyticsEventName.navigationFinished, AnalyticsEventName.navigationURLChange,
-            AnalyticsEventName.redirectOpened, AnalyticsEventName.redirectClosed,
-            AnalyticsEventName.redirectPageStarted, AnalyticsEventName.redirectPageFinished,
-            AnalyticsEventName.redirectURLChange, AnalyticsEventName.paymentSuccess,
-            AnalyticsEventName.paymentFailure, AnalyticsEventName.paymentPending,
-            AnalyticsEventName.paymentCancelled, AnalyticsEventName.paymentTerminated,
-            AnalyticsEventName.bankTransferSubmitted, AnalyticsEventName.payViaBankCompleted,
-            AnalyticsEventName.connectionError, AnalyticsEventName.webViewHTTPError,
-            AnalyticsEventName.webViewError, AnalyticsEventName.invalidMessageReceived,
-            AnalyticsEventName.sdkError, AnalyticsEventName.checkoutDependenciesFailed,
-            AnalyticsEventName.educationStepsShown, AnalyticsEventName.educationStepsFailed,
-            AnalyticsEventName.fileUploadRequested, AnalyticsEventName.filePermissionDenied,
-            AnalyticsEventName.filePickerError, AnalyticsEventName.iOSDocumentRetry,
-            AnalyticsEventName.consoleLogCaptured, AnalyticsEventName.unsupportedFunctionalityUsed,
-        ]
+    func testUnknownBridgeMessageTracksUnsupportedFunctionality() {
+        let analytics = RecordingAnalyticsTracker()
+        let router = GlomoPayEventRouter(listener: nil, devMode: false, onComplete: { _ in }, analytics: analytics)
 
-        XCTAssertEqual(names.count, 38)
-        XCTAssertEqual(Set(names).count, 38)
+        router.handle(envelope: ["type": "merchant.unsupported_action"])
+
+        XCTAssertEqual(analytics.events.last?.name, AnalyticsEventName.unsupportedFunctionalityUsed)
+        XCTAssertEqual(analytics.events.last?.properties["name"] as? String, "merchant.unsupported_action")
+    }
+
+    func testEveryDeclaredAnalyticsEventHasATrackCallSite() throws {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourcesRoot = repositoryRoot.appendingPathComponent("Sources/GlomoPaySDK")
+        let trackerURL = sourcesRoot.appendingPathComponent("Analytics/AnalyticsTracker.swift")
+        let trackerSource = try String(contentsOf: trackerURL, encoding: .utf8)
+
+        guard let eventBlock = trackerSource
+            .components(separatedBy: "enum AnalyticsEventName {")
+            .dropFirst()
+            .first?
+            .components(separatedBy: "\n}\n\n")
+            .first else {
+            return XCTFail("Unable to locate AnalyticsEventName declarations")
+        }
+
+        let declarationPattern = #"(?m)^\s+static let ([A-Za-z][A-Za-z0-9_]*)\s*="#
+        let expression = try NSRegularExpression(pattern: declarationPattern)
+        let range = NSRange(eventBlock.startIndex..<eventBlock.endIndex, in: eventBlock)
+        let identifiers = expression.matches(in: eventBlock, range: range).compactMap { match -> String? in
+            guard let identifierRange = Range(match.range(at: 1), in: eventBlock) else { return nil }
+            return String(eventBlock[identifierRange])
+        }
+
+        let source = try swiftSource(in: sourcesRoot, excluding: trackerURL)
+        let missingCallSites = identifiers.filter { identifier in
+            let escapedIdentifier = NSRegularExpression.escapedPattern(for: identifier)
+            let trackPattern = #"\.track\s*\(\s*AnalyticsEventName\."# + escapedIdentifier + #"\b"#
+            return source.range(of: trackPattern, options: .regularExpression) == nil
+        }
+
+        XCTAssertFalse(identifiers.isEmpty)
+        XCTAssertEqual(missingCallSites, [], "Events without track call sites: \(missingCallSites)")
+    }
+
+    private func swiftSource(in directory: URL, excluding excludedURL: URL) throws -> String {
+        let resourceKeys: Set<URLResourceKey> = [.isRegularFileKey]
+        guard let enumerator = FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: Array(resourceKeys)
+        ) else {
+            throw NSError(domain: "AnalyticsEventRoutingTests", code: 1)
+        }
+
+        return try enumerator.compactMap { item -> String? in
+            guard let url = item as? URL,
+                  url.pathExtension == "swift",
+                  url.standardizedFileURL != excludedURL.standardizedFileURL,
+                  try url.resourceValues(forKeys: resourceKeys).isRegularFile == true else {
+                return nil
+            }
+            return try String(contentsOf: url, encoding: .utf8)
+        }.joined(separator: "\n")
     }
 }
 

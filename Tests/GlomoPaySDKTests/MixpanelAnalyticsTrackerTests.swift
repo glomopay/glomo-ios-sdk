@@ -22,18 +22,19 @@ final class MixpanelAnalyticsTrackerTests: XCTestCase {
         tracker.track(AnalyticsEventName.checkoutStarted)
 
         let event = try await transport.nextEvent()
-        XCTAssertEqual(event.properties["distinct_id"] as? String, "order_123")
-        XCTAssertEqual(event.properties["session_id"] as? String, "session-uuid")
-        XCTAssertNil(event.properties["$insert_id"])
-        XCTAssertEqual(event.properties["flow_type"] as? String, "lrs")
-        XCTAssertEqual(event.properties["surface"] as? String, "ios-sdk")
-        XCTAssertEqual(event.properties["platform"] as? String, "ios")
-        XCTAssertEqual(event.properties["mock_mode"] as? Bool, true)
-        XCTAssertEqual(event.properties["time"] as? Int64, 1_723_620_000_000)
-        XCTAssertFalse((event.properties["timestamp"] as? String ?? "").contains("REDACTED"))
+        let properties = event.jsonProperties
+        XCTAssertEqual(properties["distinct_id"] as? String, "order_123")
+        XCTAssertEqual(properties["session_id"] as? String, "session-uuid")
+        XCTAssertNil(properties["$insert_id"])
+        XCTAssertEqual(properties["flow_type"] as? String, "lrs")
+        XCTAssertEqual(properties["surface"] as? String, "ios-sdk")
+        XCTAssertEqual(properties["platform"] as? String, "ios")
+        XCTAssertEqual(properties["mock_mode"] as? Bool, true)
+        XCTAssertEqual(properties["time"] as? Int64, 1_723_620_000_000)
+        XCTAssertFalse((properties["timestamp"] as? String ?? "").contains("REDACTED"))
     }
 
-    func testSubscriptionDoesNotInventOrderIdentity() async throws {
+    func testSubscriptionUsesSubscriptionIDAsMixpanelOrderIdentity() async throws {
         let transport = RecordingAnalyticsTransport()
         let tracker = MixpanelAnalyticsTracker(
             config: GlomoPayConfig(publicKey: "test_public_key", subscriptionId: "sub_123"),
@@ -47,9 +48,9 @@ final class MixpanelAnalyticsTrackerTests: XCTestCase {
 
         tracker.track(AnalyticsEventName.sdkInitialized)
 
-        let properties = try await transport.nextEvent().properties
-        XCTAssertTrue(properties["order_id"] is NSNull)
-        XCTAssertTrue(properties["distinct_id"] is NSNull)
+        let properties = try await transport.nextEvent().jsonProperties
+        XCTAssertEqual(properties["order_id"] as? String, "sub_123")
+        XCTAssertEqual(properties["distinct_id"] as? String, "sub_123")
         XCTAssertEqual(properties["subscription_id"] as? String, "sub_123")
     }
 
@@ -72,9 +73,9 @@ final class MixpanelAnalyticsTrackerTests: XCTestCase {
             "ram_available_bytes": Int64(120_000_000),
         ])
 
-        let properties = try await transport.nextEvent().properties
+        let properties = try await transport.nextEvent().jsonProperties
         XCTAssertEqual(properties["perf_snapshot_at"] as? String, "sdk_initialized")
-        XCTAssertEqual(properties["battery_level_percent"] as? Int, 42)
+        XCTAssertEqual(properties["battery_level_percent"] as? Int64, 42)
         XCTAssertEqual(properties["thermal_state"] as? String, "serious")
         XCTAssertEqual(properties["ram_available_bytes"] as? Int64, 120_000_000)
     }
@@ -123,7 +124,31 @@ final class MixpanelAnalyticsTrackerTests: XCTestCase {
         XCTAssertEqual(configuration.mixpanelToken, "local-token")
         XCTAssertEqual(configuration.sentryDSN, "local-dsn")
     }
+
+    func testAnalyticsEventUsesSendableJSONRepresentation() throws {
+        let values = AnalyticsValue.properties(from: [
+            "string": "value",
+            "integer": Int64(42),
+            "double": 1.5,
+            "boolean": true,
+            "null": NSNull(),
+            "array": ["value", 2],
+            "object": ["nested": "value"],
+        ])
+        let event = AnalyticsEvent(name: "Test Event", properties: values)
+
+        assertSendable(AnalyticsEvent.self)
+        XCTAssertEqual(values["string"], .string("value"))
+        XCTAssertEqual(values["integer"], .integer(42))
+        XCTAssertEqual(values["boolean"], .bool(true))
+        XCTAssertTrue(JSONSerialization.isValidJSONObject([
+            "event": event.name,
+            "properties": event.jsonProperties,
+        ]))
+    }
 }
+
+private func assertSendable<T: Sendable>(_: T.Type) {}
 
 private actor RecordingAnalyticsTransport: AnalyticsTransporting {
     private var events: [AnalyticsEvent] = []

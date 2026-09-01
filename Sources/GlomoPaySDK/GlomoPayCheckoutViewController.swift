@@ -36,6 +36,9 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private var flowBridgeHandler: GlomoPayJavaScriptBridge?
     private var filePickerCompletion: (([URL]?) -> Void)?
     private var eventRouter: GlomoPayEventRouter!
+    private var performanceSnapshotCollector: DevicePerformanceSnapshotCollector?
+    private var networkSnapshotCollector: IOSNetworkPathSnapshotCollector?
+    private var didStartCheckout = false
 
     public init(
         config: GlomoPayConfig,
@@ -78,6 +81,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
 
     public override func viewDidLoad() {
         super.viewDidLoad()
+        performanceSnapshotCollector = DevicePerformanceSnapshot.makeCollector()
         view.backgroundColor = .systemBackground
         eventRouter = GlomoPayEventRouter(
             listener: listener,
@@ -115,6 +119,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
 
     deinit {
         progressObservation?.invalidate()
+        performanceSnapshotCollector?.restoreBatteryMonitoring()
     }
 
     private func configureWebView() {
@@ -225,12 +230,26 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     }
 
     private func startCheckout() {
+        guard !didStartCheckout else { return }
+        didStartCheckout = true
+        let collector = IOSAnalyticsProperties.makeNetworkSnapshotCollector()
+        networkSnapshotCollector = collector
+        collector.collect { [weak self] networkProperties in
+            DispatchQueue.main.async {
+                guard let self, !self.didTerminate else { return }
+                self.networkSnapshotCollector = nil
+                self.continueCheckout(networkProperties: networkProperties)
+            }
+        }
+    }
+
+    private func continueCheckout(networkProperties: [String: Any?]) {
         if !didTrackSDKInitialization {
             didTrackSDKInitialization = true
-            analytics.track(
-                AnalyticsEventName.sdkInitialized,
-                properties: DevicePerformanceSnapshot.collect()
-            )
+            var properties = performanceSnapshotCollector?.collect()
+                ?? DevicePerformanceSnapshot.emptyProperties
+            properties.merge(networkProperties) { _, networkValue in networkValue }
+            analytics.track(AnalyticsEventName.sdkInitialized, properties: properties)
         }
         let errors = Validator.validate(config: config)
         guard errors.isEmpty else {

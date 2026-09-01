@@ -21,10 +21,11 @@ unchanged.
 The implementation sends the shared native SDK event contract directly to
 `https://api.mixpanel.com/track?ip=1` using an ephemeral `URLSession`:
 
-- `distinct_id` is the order ID.
+- `distinct_id` is the order ID, or the subscription ID for subscription checkouts.
 - `session_id` is a UUID generated once per checkout invocation.
 - `sdk_source`, `platform`, and `surface` are `glomo-ios-sdk`, `ios`, and `ios-sdk`.
-- Subscription checkouts preserve a null `order_id` and `distinct_id` rather than inventing an identity.
+- Subscription checkouts send their subscription ID as `order_id` and `distinct_id`, while
+  preserving the same value in `subscription_id`.
 - Requests are asynchronous, have a 10-second timeout, and do not retry.
 
 ## Privacy boundary
@@ -47,6 +48,11 @@ and state, Low Power Mode, thermal state, physical memory, process memory, jetsa
 active processor count. Collection is fail-open, does not delay checkout, does not require a
 merchant permission or entitlement, and is not used for user tracking. Unknown values are sent
 as null. The SDK does not continuously sample device performance.
+
+The same initialization event includes one `NWPathMonitor` reading for Wi-Fi and cellular
+interface state. The monitor is cancelled after its first satisfied reading or after a bounded
+250 ms timeout. Unsatisfied paths and timeouts preserve both values as null, and no continuous
+network monitoring occurs.
 
 ## Isolated Sentry client
 

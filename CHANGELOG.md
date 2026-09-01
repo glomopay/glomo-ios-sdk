@@ -27,3 +27,10 @@ All notable changes to the GlomoPay iOS SDK are documented here.
 - Analytics failures are fire-and-forget and cannot interrupt the checkout journey.
 - Mixpanel and Sentry client configuration is bundled by the SDK, so merchants do not add
   telemetry values to their application `Info.plist`.
+- Battery monitoring now starts before the initialization snapshot, preserves host-app state,
+  and reports unavailable process-memory readings as null.
+- The initialization snapshot now includes a bounded one-shot network-path reading, with null
+  Wi-Fi and cellular values retained for unsatisfied paths or timeouts.
+- Subscription analytics now use the subscription ID for Mixpanel `order_id` and `distinct_id`.
+- Analytics delivery payloads and transport/error-reporting boundaries are now concurrency-safe
+  with `Sendable` types.

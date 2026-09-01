@@ -37,16 +37,45 @@ final class DevicePerformanceSnapshotTests: XCTestCase {
         XCTAssertEqual(properties["battery_state"] as? String, "unknown")
     }
 
-    func testRestoresBatteryMonitoringStateAfterCollection() {
+    func testCollectorEnablesMonitoringBeforeCollectionAndRestoresItWhenStopped() {
         let reader = FakeDevicePerformanceReader(
             isBatteryMonitoringEnabled: false,
             batteryLevel: 0.5
         )
+        let collector = DevicePerformanceSnapshotCollector(reader: reader)
 
-        _ = DevicePerformanceSnapshot.collect(from: reader)
+        XCTAssertTrue(reader.isBatteryMonitoringEnabled)
+        XCTAssertEqual(reader.batteryMonitoringChanges, [true])
+
+        _ = collector.collect()
+        XCTAssertEqual(reader.batteryMonitoringChanges, [true])
+
+        collector.restoreBatteryMonitoring()
 
         XCTAssertFalse(reader.isBatteryMonitoringEnabled)
         XCTAssertEqual(reader.batteryMonitoringChanges, [true, false])
+    }
+
+    func testCollectorDoesNotModifyMonitoringThatWasAlreadyEnabledByHost() {
+        let reader = FakeDevicePerformanceReader(
+            isBatteryMonitoringEnabled: true,
+            batteryLevel: 0.5
+        )
+        let collector = DevicePerformanceSnapshotCollector(reader: reader)
+
+        _ = collector.collect()
+        collector.restoreBatteryMonitoring()
+
+        XCTAssertTrue(reader.isBatteryMonitoringEnabled)
+        XCTAssertEqual(reader.batteryMonitoringChanges, [])
+    }
+
+    func testZeroAvailableMemoryIsReportedAsNull() {
+        let reader = FakeDevicePerformanceReader(availableMemoryBytes: 0)
+
+        let properties = DevicePerformanceSnapshot.collect(from: reader)
+
+        XCTAssertNil(properties["ram_available_bytes"] as? Int64)
     }
 
     func testNullableValuesSurviveAnalyticsSanitization() {

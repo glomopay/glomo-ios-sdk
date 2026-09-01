@@ -1,11 +1,15 @@
 import Foundation
 
-struct AnalyticsEvent {
+struct AnalyticsEvent: Sendable {
     let name: String
-    let properties: [String: Any]
+    let properties: [String: AnalyticsValue]
+
+    var jsonProperties: [String: Any] {
+        properties.mapValues(\.jsonObject)
+    }
 }
 
-protocol AnalyticsTransporting {
+protocol AnalyticsTransporting: Sendable {
     func send(_ event: AnalyticsEvent) async throws
 }
 
@@ -53,6 +57,7 @@ final class MixpanelAnalyticsTracker: AnalyticsTracking {
         errorReporter.addBreadcrumb(category: "analytics", message: event, data: ["event_name": event])
         let date = now()
         let state = lock.withLock { (flowType, checkoutURL) }
+        let analyticsOrderID = config.checkoutId
         var common = deviceProperties()
         common.merge([
             "sdk_version": sdkVersion,
@@ -60,7 +65,7 @@ final class MixpanelAnalyticsTracker: AnalyticsTracking {
             "platform": "ios",
             "surface": "ios-sdk",
             "flow_type": state.0,
-            "order_id": config.orderId,
+            "order_id": analyticsOrderID,
             "subscription_id": config.subscriptionId,
             "public_key": config.publicKey,
             "checkout_url": state.1?.absoluteString,
@@ -69,10 +74,14 @@ final class MixpanelAnalyticsTracker: AnalyticsTracking {
             "time": Int64(date.timeIntervalSince1970 * 1_000),
             "timestamp": Self.formattedTimestamp(date),
             "session_id": sessionID,
-            "distinct_id": config.orderId,
+            "distinct_id": analyticsOrderID,
         ]) { _, new in new }
         common.merge(properties) { _, new in new }
-        let analyticsEvent = AnalyticsEvent(name: event, properties: AnalyticsSanitizer.properties(common))
+        let sanitizedProperties = AnalyticsSanitizer.properties(common)
+        let analyticsEvent = AnalyticsEvent(
+            name: event,
+            properties: AnalyticsValue.properties(from: sanitizedProperties)
+        )
         Task.detached(priority: .utility) { [transport, errorReporter] in
             do {
                 try await transport.send(analyticsEvent)
@@ -100,7 +109,7 @@ final class MixpanelAnalyticsTracker: AnalyticsTracking {
     }
 }
 
-final class MixpanelHTTPTransport: AnalyticsTransporting {
+final class MixpanelHTTPTransport: AnalyticsTransporting, @unchecked Sendable {
     static let endpoint = URL(string: "https://api.mixpanel.com/track?ip=1")!
     private let token: String
     private let endpoint: URL
@@ -130,7 +139,7 @@ final class MixpanelHTTPTransport: AnalyticsTransporting {
         request.timeoutInterval = 10
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/plain", forHTTPHeaderField: "Accept")
-        var properties = event.properties
+        var properties = event.jsonProperties
         properties["token"] = token
         request.httpBody = try JSONSerialization.data(withJSONObject: [[
             "event": event.name,

@@ -1,7 +1,7 @@
 import Foundation
 import Sentry
 
-final class IsolatedSentryErrorReporter: SDKErrorReporting {
+final class IsolatedSentryErrorReporter: SDKErrorReporting, @unchecked Sendable {
     private let client: SentryClient?
     private let sessionID: String
     private let devMode: Bool

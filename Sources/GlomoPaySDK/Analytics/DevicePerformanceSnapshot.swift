@@ -26,26 +26,49 @@ protocol DevicePerformanceReading: AnyObject {
     var activeProcessorCount: Int? { get }
 }
 
-enum DevicePerformanceSnapshot {
-    static func collect() -> [String: Any?] {
-        #if canImport(UIKit)
-        return collect(from: IOSDevicePerformanceReader())
-        #else
-        return emptyProperties
-        #endif
+final class DevicePerformanceSnapshotCollector {
+    private let reader: DevicePerformanceReading
+    private let shouldRestoreBatteryMonitoring: Bool
+    private var didRestoreBatteryMonitoring = false
+
+    init(reader: DevicePerformanceReading) {
+        self.reader = reader
+        shouldRestoreBatteryMonitoring = !reader.isBatteryMonitoringEnabled
+        if shouldRestoreBatteryMonitoring {
+            reader.isBatteryMonitoringEnabled = true
+        }
     }
 
-    static func collect(from reader: DevicePerformanceReading) -> [String: Any?] {
-        let previousBatteryMonitoringState = reader.isBatteryMonitoringEnabled
-        reader.isBatteryMonitoringEnabled = true
-        defer {
-            reader.isBatteryMonitoringEnabled = previousBatteryMonitoringState
-        }
+    func collect() -> [String: Any?] {
+        DevicePerformanceSnapshot.collect(from: reader)
+    }
 
+    func restoreBatteryMonitoring() {
+        guard shouldRestoreBatteryMonitoring, !didRestoreBatteryMonitoring else { return }
+        didRestoreBatteryMonitoring = true
+        reader.isBatteryMonitoringEnabled = false
+    }
+
+    deinit {
+        restoreBatteryMonitoring()
+    }
+}
+
+enum DevicePerformanceSnapshot {
+    #if canImport(UIKit)
+    static func makeCollector() -> DevicePerformanceSnapshotCollector {
+        DevicePerformanceSnapshotCollector(reader: IOSDevicePerformanceReader())
+    }
+    #endif
+
+    static func collect(from reader: DevicePerformanceReading) -> [String: Any?] {
         let level = reader.batteryLevel
         let batteryLevelPercent: Int? = (0...1).contains(level)
             ? Int((level * 100).rounded())
             : nil
+        let availableMemoryBytes = reader.availableMemoryBytes.flatMap { value in
+            value == 0 ? nil : value
+        }
 
         return [
             "perf_snapshot_at": "sdk_initialized",
@@ -54,14 +77,14 @@ enum DevicePerformanceSnapshot {
             "is_low_power_mode": reader.isLowPowerModeEnabled,
             "thermal_state": reader.thermalState?.rawValue,
             "ram_total_bytes": reader.totalMemoryBytes,
-            "ram_available_bytes": reader.availableMemoryBytes,
+            "ram_available_bytes": availableMemoryBytes,
             "ram_used_bytes": reader.usedMemoryBytes,
             "is_low_memory": nil,
             "processor_count": reader.activeProcessorCount,
         ]
     }
 
-    private static let emptyProperties: [String: Any?] = [
+    static let emptyProperties: [String: Any?] = [
         "perf_snapshot_at": "sdk_initialized",
         "battery_level_percent": nil,
         "battery_state": nil,
@@ -117,7 +140,9 @@ private final class IOSDevicePerformanceReader: DevicePerformanceReading {
     }
 
     var availableMemoryBytes: Int64? {
-        Int64(exactly: os_proc_available_memory())
+        let availableMemory = os_proc_available_memory()
+        guard availableMemory != 0 else { return nil }
+        return Int64(exactly: availableMemory)
     }
 
     var usedMemoryBytes: Int64? {

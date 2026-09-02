@@ -101,7 +101,9 @@ final class GlomoPaySDKTests: XCTestCase {
         let router = GlomoPayEventRouter(
             listener: listener,
             devMode: false,
-            onComplete: { results.append($0) }
+            onComplete: { results.append($0) },
+            analytics: NoOpAnalyticsTracker(),
+            errorReporter: NoOpSDKErrorReporter()
         )
         let event: [String: Any] = [
             "type": "message",
@@ -129,7 +131,9 @@ final class GlomoPaySDKTests: XCTestCase {
         let router = GlomoPayEventRouter(
             listener: listener,
             devMode: false,
-            onComplete: { results.append($0) }
+            onComplete: { results.append($0) },
+            analytics: NoOpAnalyticsTracker(),
+            errorReporter: NoOpSDKErrorReporter()
         )
         router.handle(envelope: [
             "type": "message",
@@ -151,7 +155,9 @@ final class GlomoPaySDKTests: XCTestCase {
         let cancellationRouter = GlomoPayEventRouter(
             listener: cancellationListener,
             devMode: false,
-            onComplete: { cancellationResults.append($0) }
+            onComplete: { cancellationResults.append($0) },
+            analytics: NoOpAnalyticsTracker(),
+            errorReporter: NoOpSDKErrorReporter()
         )
         cancellationRouter.handle(envelope: ["type": "window.close"])
         XCTAssertEqual(cancellationResults.count, 0)
@@ -160,7 +166,13 @@ final class GlomoPaySDKTests: XCTestCase {
 
     func testRoutesRedirectAndDependencyEvents() {
         let listener = MockListener()
-        let router = GlomoPayEventRouter(listener: listener, devMode: false, onComplete: { _ in })
+        let router = GlomoPayEventRouter(
+            listener: listener,
+            devMode: false,
+            onComplete: { _ in },
+            analytics: NoOpAnalyticsTracker(),
+            errorReporter: NoOpSDKErrorReporter()
+        )
         router.handle(envelope: ["type": "window.open", "url": "https://bank.example/3ds"])
         router.handle(envelope: ["type": "dependencies.failed_to_load", "message": "LRS data missing"])
         router.handle(envelope: ["type": "file.input", "accept": "image/*"])
@@ -174,7 +186,13 @@ final class GlomoPaySDKTests: XCTestCase {
 
     func testMalformedBridgeMessageBecomesSdkError() {
         let listener = MockListener()
-        let router = GlomoPayEventRouter(listener: listener, devMode: false, onComplete: { _ in })
+        let router = GlomoPayEventRouter(
+            listener: listener,
+            devMode: false,
+            onComplete: { _ in },
+            analytics: NoOpAnalyticsTracker(),
+            errorReporter: NoOpSDKErrorReporter()
+        )
         router.handle(body: "not-json")
         XCTAssertEqual(listener.errors.count, 1)
         XCTAssertEqual(listener.errors.first?.type, .unknown)

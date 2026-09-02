@@ -1,15 +1,10 @@
 import Foundation
 import Sentry
 
-final class IsolatedSentryErrorReporter: SDKErrorReporting, @unchecked Sendable {
+final class IsolatedSentryClient: @unchecked Sendable {
     private let client: SentryClient?
-    private let sessionID: String
-    private let devMode: Bool
-    private let lock = NSLock()
-    private var flowType: String
-    private var breadcrumbs: [Breadcrumb] = []
 
-    init(dsn: String, sessionID: String, initialFlowType: String, devMode: Bool) {
+    init(dsn: String) {
         let options = Options()
         options.dsn = dsn
         options.debug = false
@@ -19,7 +14,43 @@ final class IsolatedSentryErrorReporter: SDKErrorReporting, @unchecked Sendable 
         options.enableNetworkTracking = false
         options.enableSwizzling = false
         options.tracesSampleRate = 0
-        self.client = SentryClient(options: options)
+        let client = SentryClient(options: options)
+        if client == nil {
+            GlomoPayLogger.error(
+                "Isolated Sentry client initialization failed",
+                error: IsolatedSentryInitializationError.invalidConfiguration
+            )
+        }
+        self.client = client
+    }
+
+    func capture(event: Event) {
+        _ = client?.capture(event: event)
+    }
+
+    func flush(timeout: TimeInterval) {
+        client?.flush(timeout: timeout)
+    }
+}
+
+private enum IsolatedSentryInitializationError: LocalizedError {
+    case invalidConfiguration
+
+    var errorDescription: String? {
+        "SentryClient(options:) returned nil; verify the SDK telemetry configuration"
+    }
+}
+
+final class IsolatedSentryErrorReporter: SDKErrorReporting, @unchecked Sendable {
+    private let client: IsolatedSentryClient
+    private let sessionID: String
+    private let devMode: Bool
+    private let lock = NSLock()
+    private var flowType: String
+    private var breadcrumbs: [Breadcrumb] = []
+
+    init(client: IsolatedSentryClient, sessionID: String, initialFlowType: String, devMode: Bool) {
+        self.client = client
         self.sessionID = sessionID
         self.flowType = initialFlowType
         self.devMode = devMode
@@ -54,11 +85,11 @@ final class IsolatedSentryErrorReporter: SDKErrorReporting, @unchecked Sendable 
         ]
         event.extra = ["session_id": sessionID].merging(safeContext(context)) { _, new in new }
         event.breadcrumbs = state.1
-        _ = client?.capture(event: event)
+        client.capture(event: event)
     }
 
     func flush(timeout: TimeInterval) {
-        client?.flush(timeout: timeout)
+        client.flush(timeout: timeout)
     }
 
     private func safeContext(_ context: [String: Any?]) -> [String: Any] {
@@ -72,11 +103,11 @@ enum SDKErrorReporterFactory {
         config: GlomoPayConfig,
         sessionID: String,
         flowType: String,
-        runtimeConfiguration: SDKRuntimeConfiguration = .load()
+        runtime: SDKTelemetryRuntime = .shared
     ) -> SDKErrorReporting {
-        guard let dsn = runtimeConfiguration.sentryDSN else { return NoOpSDKErrorReporter() }
+        guard let client = runtime.sentryClient else { return NoOpSDKErrorReporter() }
         return IsolatedSentryErrorReporter(
-            dsn: dsn,
+            client: client,
             sessionID: sessionID,
             initialFlowType: flowType,
             devMode: config.devMode

@@ -1,4 +1,5 @@
 import XCTest
+import UniformTypeIdentifiers
 @testable import GlomoPaySDK
 
 final class AnalyticsEventRoutingTests: XCTestCase {
@@ -8,7 +9,8 @@ final class AnalyticsEventRoutingTests: XCTestCase {
             listener: nil,
             devMode: false,
             onComplete: { _ in },
-            analytics: analytics
+            analytics: analytics,
+            errorReporter: NoOpSDKErrorReporter()
         )
 
         router.handle(envelope: [
@@ -29,9 +31,15 @@ final class AnalyticsEventRoutingTests: XCTestCase {
         ])
     }
 
-    func testMalformedMessageTracksInvalidMessageAndSDKError() {
+    func testMalformedMessageTracksInvalidMessageAndSDKError() throws {
         let analytics = RecordingAnalyticsTracker()
-        let router = GlomoPayEventRouter(listener: nil, devMode: false, onComplete: { _ in }, analytics: analytics)
+        let router = GlomoPayEventRouter(
+            listener: nil,
+            devMode: false,
+            onComplete: { _ in },
+            analytics: analytics,
+            errorReporter: NoOpSDKErrorReporter()
+        )
 
         router.handle(body: "not-json")
 
@@ -39,16 +47,88 @@ final class AnalyticsEventRoutingTests: XCTestCase {
             AnalyticsEventName.invalidMessageReceived,
             AnalyticsEventName.sdkError,
         ])
+        let invalidMessage = try XCTUnwrap(analytics.events.first)
+        XCTAssertFalse(invalidMessage.properties.keys.contains("data"))
+        XCTAssertEqual(invalidMessage.properties["data_type"] as? String, "String")
+        XCTAssertEqual(invalidMessage.properties["top_level_keys"] as? String, "")
+        XCTAssertEqual(invalidMessage.properties["byte_length"] as? Int, 8)
+    }
+
+    func testSchemaKeyFilteringDropsSensitiveFieldNames() {
+        XCTAssertEqual(
+            AnalyticsSanitizer.schemaKeys(["type", "payment_id", "customer_email", "card_number"]),
+            ["payment_id", "type"]
+        )
+    }
+
+    func testSDKErrorSerializationEscapesMessagesAndPreservesShape() throws {
+        let message = "Invalid fragment: {\"type\":\"a\"}\\next\nline"
+        let serialized = SDKErrorAnalyticsSerializer.serialize([
+            SdkError(type: .unknown, message: message, field: "bridge"),
+        ])
+        let data = try XCTUnwrap(serialized.data(using: .utf8))
+        let payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        )
+        let error = try XCTUnwrap(payload.first)
+
+        XCTAssertEqual(error["type"] as? String, "unknown")
+        XCTAssertEqual(error["message"] as? String, message)
+        XCTAssertEqual(error["field"] as? String, "bridge")
     }
 
     func testUnknownBridgeMessageTracksUnsupportedFunctionality() {
         let analytics = RecordingAnalyticsTracker()
-        let router = GlomoPayEventRouter(listener: nil, devMode: false, onComplete: { _ in }, analytics: analytics)
+        let router = GlomoPayEventRouter(
+            listener: nil,
+            devMode: false,
+            onComplete: { _ in },
+            analytics: analytics,
+            errorReporter: NoOpSDKErrorReporter()
+        )
 
         router.handle(envelope: ["type": "merchant.unsupported_action"])
 
         XCTAssertEqual(analytics.events.last?.name, AnalyticsEventName.unsupportedFunctionalityUsed)
         XCTAssertEqual(analytics.events.last?.properties["name"] as? String, "merchant.unsupported_action")
+    }
+
+    func testFileInputStoresRequestedAcceptTypesForNativePicker() {
+        let analytics = RecordingAnalyticsTracker()
+        let router = GlomoPayEventRouter(
+            listener: nil,
+            devMode: false,
+            onComplete: { _ in },
+            analytics: analytics,
+            errorReporter: NoOpSDKErrorReporter()
+        )
+
+        router.handle(envelope: [
+            "type": "file.input",
+            "accept": " application/pdf, image/* ",
+        ])
+
+        XCTAssertEqual(router.latestFileAcceptTypes, "application/pdf, image/*")
+        XCTAssertEqual(
+            analytics.events.last?.properties["accept_types"] as? String,
+            "application/pdf, image/*"
+        )
+    }
+
+    @available(macOS 11.0, *)
+    func testFileAcceptTypesResolveMIMEsExtensionsAndFallback() {
+        let resolved = FileAcceptTypeResolver.contentTypes(
+            for: "application/pdf, image/*, .heic, application/pdf"
+        )
+
+        XCTAssertTrue(resolved.contains(where: { $0.conforms(to: .pdf) }))
+        XCTAssertTrue(resolved.contains(where: { $0.conforms(to: .image) }))
+        XCTAssertEqual(resolved.filter { $0.conforms(to: .pdf) }.count, 1)
+        XCTAssertEqual(FileAcceptTypeResolver.contentTypes(for: "").map(\.identifier), [UTType.item.identifier])
+        XCTAssertEqual(
+            FileAcceptTypeResolver.contentTypes(for: "not-a-valid-type").map(\.identifier),
+            [UTType.item.identifier]
+        )
     }
 
     func testEveryDeclaredAnalyticsEventHasATrackCallSite() throws {

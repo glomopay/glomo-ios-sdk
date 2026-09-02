@@ -53,6 +53,10 @@ enum AnalyticsSanitizer {
         String(redact(value).prefix(limit))
     }
 
+    static func schemaKeys(_ keys: [String]) -> [String] {
+        keys.filter { !matches(blockedKey, $0) }.sorted()
+    }
+
     static func navigationURL(_ url: URL?) -> String? {
         guard let url, let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme),
               let host = url.host, !host.isEmpty else { return nil }

@@ -67,6 +67,12 @@ final class AnalyticsSanitizerTests: XCTestCase {
         XCTAssertEqual(output["timestamp"] as? String, timestamp)
     }
 
+    func testNumericErrorCodeKeepsItsMixpanelTypeAndValue() {
+        let output = AnalyticsSanitizer.properties(["error_code": 123_456])
+
+        XCTAssertEqual(output["error_code"] as? Int, 123_456)
+    }
+
     func testNullableCompliancePropertiesArePreserved() {
         let output = AnalyticsSanitizer.properties(["is_compliant": nil])
 

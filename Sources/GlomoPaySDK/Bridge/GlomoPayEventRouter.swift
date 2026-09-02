@@ -9,6 +9,7 @@ final class GlomoPayEventRouter {
     private let analytics: AnalyticsTracking
     private let errorReporter: SDKErrorReporting
     private var terminalDelivered = false
+    private(set) var latestFileAcceptTypes = ""
 
     init(
         listener: GlomoPayListener?,
@@ -16,8 +17,8 @@ final class GlomoPayEventRouter {
         onComplete: @escaping (GlomoPayResult) -> Void,
         onWindowOpen: @escaping (URL) -> Void = { _ in },
         onWindowClose: @escaping () -> Void = {},
-        analytics: AnalyticsTracking = NoOpAnalyticsTracker(),
-        errorReporter: SDKErrorReporting = NoOpSDKErrorReporter()
+        analytics: AnalyticsTracking,
+        errorReporter: SDKErrorReporting
     ) {
         self.listener = listener
         self.devMode = devMode
@@ -33,10 +34,12 @@ final class GlomoPayEventRouter {
             let envelope = try dictionary(from: body)
             handle(envelope: envelope)
         } catch {
+            let schema = bridgeBodySchema(body)
             analytics.track(AnalyticsEventName.invalidMessageReceived, properties: [
                 "webview_type": "main",
-                "data": AnalyticsSanitizer.text(String(describing: body), limit: 500),
-                "data_type": String(describing: type(of: body)),
+                "data_type": schema.dataType,
+                "top_level_keys": schema.topLevelKeys.joined(separator: ","),
+                "byte_length": schema.byteLength,
             ])
             emitError(message: error.localizedDescription)
         }
@@ -88,8 +91,10 @@ final class GlomoPayEventRouter {
                 "source": "bridge",
             ])
         case "file.input":
+            latestFileAcceptTypes = (envelope["accept"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             analytics.track(AnalyticsEventName.fileUploadRequested, properties: [
-                "accept_types": envelope["accept"] as? String,
+                "accept_types": latestFileAcceptTypes,
             ])
             emit("file.requested", envelope)
         default:
@@ -196,10 +201,9 @@ final class GlomoPayEventRouter {
 
     private func emitError(message: String) {
         let error = SdkError(type: .unknown, message: message)
-        let serialized = "[{\"type\":\"unknown\",\"message\":\"\(AnalyticsSanitizer.text(message, limit: 500))\"}]"
         analytics.track(AnalyticsEventName.sdkError, properties: [
             "error_count": 1,
-            "errors": serialized,
+            "errors": SDKErrorAnalyticsSerializer.serialize([error]),
         ])
         errorReporter.capture(operation: "bridge_message", error: error, context: ["error_type": "unknown"])
         listener?.onSdkError([error])
@@ -213,6 +217,35 @@ final class GlomoPayEventRouter {
             return dictionary
         }
         throw NSError(domain: "GlomoPayBridge", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unable to parse WebView bridge message"])
+    }
+
+    private func bridgeBodySchema(_ body: Any) -> (dataType: String, topLevelKeys: [String], byteLength: Int) {
+        let keys: [String]
+        if let dictionary = body as? [String: Any] {
+            keys = Array(dictionary.keys)
+        } else if let string = body as? String,
+                  let data = string.data(using: .utf8),
+                  let dictionary = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            keys = Array(dictionary.keys)
+        } else {
+            keys = []
+        }
+
+        return (
+            dataType: String(describing: type(of: body)),
+            topLevelKeys: AnalyticsSanitizer.schemaKeys(keys),
+            byteLength: bridgeBodyByteLength(body)
+        )
+    }
+
+    private func bridgeBodyByteLength(_ body: Any) -> Int {
+        if let data = body as? Data { return data.count }
+        if let string = body as? String { return string.lengthOfBytes(using: .utf8) }
+        if JSONSerialization.isValidJSONObject(body),
+           let data = try? JSONSerialization.data(withJSONObject: body) {
+            return data.count
+        }
+        return 0
     }
 }
 

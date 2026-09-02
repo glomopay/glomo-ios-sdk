@@ -15,7 +15,7 @@ final class IsolatedSentryDeliveryTests: XCTestCase {
             "The SDK-owned Sentry DSN is not configured."
         )
         let reporter = IsolatedSentryErrorReporter(
-            dsn: dsn,
+            client: IsolatedSentryClient(dsn: dsn),
             sessionID: UUID().uuidString,
             initialFlowType: "diagnostic",
             devMode: true

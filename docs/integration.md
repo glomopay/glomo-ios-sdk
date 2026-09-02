@@ -10,8 +10,8 @@ SwiftPM and CocoaPods.
 Release maintainers generate the resource with `scripts/generate-telemetry-config.sh` using
 shell environment variables before creating the release tag. Local SDK development can
 override bundled values with `GLOMOPAY_MIXPANEL_TOKEN` and `GLOMOPAY_SENTRY_DSN` environment
-variables. A host `Info.plist` value remains a backward-compatible development override, but
-is not part of merchant integration.
+variables. The SDK never reads these values from the merchant application's `Info.plist`, so
+host configuration cannot redirect SDK telemetry.
 
 If either value is absent, only that integration becomes a no-op. Checkout behavior is
 unchanged.
@@ -27,6 +27,11 @@ The implementation sends the shared native SDK event contract directly to
 - Subscription checkouts send their subscription ID as `order_id` and `distinct_id`, while
   preserving the same value in `subscription_id`.
 - Requests are asynchronous, have a 10-second timeout, and do not retry.
+- Mixpanel derives coarse location from the request IP. The SDK privacy manifest declares
+  coarse location and marks order-associated analytics data as linked to the user.
+- The SDK does not perform App Tracking Transparency tracking. Mixpanel and Sentry are
+  analytics/diagnostic processors, not privacy tracking domains, so `NSPrivacyTracking`
+  remains disabled and `NSPrivacyTrackingDomains` remains empty.
 
 ## Privacy boundary
 
@@ -56,8 +61,10 @@ network monitoring occurs.
 
 ## Isolated Sentry client
 
-The SDK transitively depends on `Sentry/Core` 8.58.4 for CocoaPods and `sentry-cocoa` 8.58.4
-for SwiftPM. It creates a private `SentryClient` and does not invoke `SentrySDK.start`, mutate
+The SDK transitively depends on Sentry Cocoa `>= 8.58.4, < 9.0.0` for SwiftPM and on
+`Sentry/Core ~> 8.58` for CocoaPods. This allows the SDK to coexist with merchant applications
+using a compatible Sentry 8.x release while excluding Sentry 9 breaking changes. It creates a
+private `SentryClient` and does not invoke `SentrySDK.start`, mutate
 the global scope, or reuse a merchant-owned client. Session Replay, automatic sessions,
 performance tracing, network tracking, and swizzling are disabled. Only explicitly captured
 SDK and analytics-delivery failures are submitted with sanitized, allow-listed context.

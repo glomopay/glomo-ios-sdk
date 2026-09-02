@@ -24,5 +24,5 @@ Pod::Spec.new do |spec|
     "GlomoPaySDKConfiguration" => ["Sources/GlomoPaySDK/Resources/GlomoPayTelemetryConfiguration.plist"]
   }
   spec.frameworks = "Foundation", "UIKit", "WebKit"
-  spec.dependency "Sentry/Core", "8.58.4"
+  spec.dependency "Sentry/Core", "~> 8.58"
 end

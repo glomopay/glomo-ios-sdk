@@ -29,6 +29,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private var errorView: UIView?
     private var currentURL: URL?
     private var didRetryMainDocument = false
+    private var didRetryAfterProcessTermination = false
     private var didTerminate = false
     private var didTrackSDKInitialization = false
     private var progressObservation: NSKeyValueObservation?
@@ -40,18 +41,35 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private var networkSnapshotCollector: IOSNetworkPathSnapshotCollector?
     private var didStartCheckout = false
 
-    public init(
+    public convenience init(
         config: GlomoPayConfig,
         orderType: String = "auto",
         listener: GlomoPayListener? = nil,
         apiClient: GlomoPayApiClient? = nil
+    ) {
+        self.init(
+            config: config,
+            orderType: orderType,
+            listener: listener,
+            apiClient: apiClient,
+            telemetryRuntime: .shared
+        )
+    }
+
+    init(
+        config: GlomoPayConfig,
+        orderType: String,
+        listener: GlomoPayListener?,
+        apiClient: GlomoPayApiClient?,
+        telemetryRuntime: SDKTelemetryRuntime
     ) {
         let normalizedOrderType = orderType.lowercased()
         let sessionID = UUID().uuidString.lowercased()
         let errorReporter = SDKErrorReporterFactory.create(
             config: config,
             sessionID: sessionID,
-            flowType: normalizedOrderType
+            flowType: normalizedOrderType,
+            runtime: telemetryRuntime
         )
         self.config = config
         self.requestedOrderType = normalizedOrderType
@@ -63,7 +81,8 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             config: config,
             sessionID: sessionID,
             flowType: normalizedOrderType,
-            errorReporter: errorReporter
+            errorReporter: errorReporter,
+            runtime: telemetryRuntime
         )
         GlomoPayLogger.devMode = config.devMode
         super.init(nibName: nil, bundle: nil)
@@ -266,7 +285,10 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         )
         analytics.track(
             AnalyticsEventName.deviceComplianceChecked,
-            properties: complianceAnalyticsProperties(compliance)
+            properties: ComplianceAnalyticsProperties.make(
+                result: compliance,
+                devMode: config.devMode
+            )
         )
         listener?.onEvent(name: "device.compliance_checked", payload: [
             "isCompliant": compliance.isCompliant,
@@ -337,6 +359,10 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         analytics.track(AnalyticsEventName.checkoutURLResolved, properties: ["url": url.absoluteString])
         analytics.track(AnalyticsEventName.checkoutStarted)
         listener?.onEvent(name: "checkout.url_resolved", payload: ["url": url.absoluteString, "orderType": orderType])
+        webView.load(mainDocumentRequest(for: url))
+    }
+
+    private func mainDocumentRequest(for url: URL) -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -344,7 +370,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         request.setValue("en-IN,en;q=0.9", forHTTPHeaderField: "Accept-Language")
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
         request.setValue("1", forHTTPHeaderField: "Upgrade-Insecure-Requests")
-        webView.load(request)
+        return request
     }
 
     public func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
@@ -601,10 +627,11 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     ) {
         filePickerCompletion?([])
         filePickerCompletion = completionHandler
+        let acceptTypes = eventRouter.latestFileAcceptTypes
 
         guard presentedViewController == nil else {
             analytics.track(AnalyticsEventName.filePickerError, properties: [
-                "accept_types": "",
+                "accept_types": acceptTypes,
                 "error_message": "Another view controller is already presented",
                 "picker_method": "document_picker",
             ])
@@ -614,7 +641,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         }
 
         let picker = UIDocumentPickerViewController(
-            forOpeningContentTypes: [UTType.item],
+            forOpeningContentTypes: FileAcceptTypeResolver.contentTypes(for: acceptTypes),
             asCopy: true
         )
         picker.allowsMultipleSelection = parameters.allowsMultipleSelection
@@ -712,6 +739,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         closeFlow()
         switch result {
         case .success, .failure, .cancelled:
+            flushTerminalErrorReports()
             dismiss(animated: true)
         }
     }
@@ -793,6 +821,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         errorView?.removeFromSuperview()
         errorView = nil
         didRetryMainDocument = false
+        didRetryAfterProcessTermination = false
         currentURL.map { loadCheckout(url: $0, orderType: requestedOrderType) }
     }
 
@@ -808,24 +837,26 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         ])
         listener?.onPaymentTerminate(source)
         listener?.onEvent(name: "checkout.closed", payload: ["source": source.rawValue])
+        flushTerminalErrorReports()
         dismiss(animated: true)
     }
 
     private func deliverSdkErrors(_ errors: [SdkError]) {
         didTerminate = true
-        let serialized = errors.map {
-            ["type": $0.type.rawValue, "message": AnalyticsSanitizer.text($0.message, limit: 500), "field": $0.field as Any]
-        }
-        let data = try? JSONSerialization.data(withJSONObject: serialized)
         analytics.track(AnalyticsEventName.sdkError, properties: [
             "error_count": errors.count,
-            "errors": data.flatMap { String(data: $0, encoding: .utf8) } ?? "[]",
+            "errors": SDKErrorAnalyticsSerializer.serialize(errors),
         ])
         if let first = errors.first {
             errorReporter.capture(operation: "sdk_error", error: first, context: ["error_type": first.type.rawValue])
         }
         listener?.onSdkError(errors)
+        flushTerminalErrorReports()
         dismiss(animated: true)
+    }
+
+    private func flushTerminalErrorReports() {
+        SDKErrorReporterTerminalFlusher.flush(errorReporter)
     }
 
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
@@ -840,24 +871,33 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             error: CheckoutMonitoringError.webContentProcessTerminated,
             context: ["webview_type": isFlow ? "flow" : "main"]
         )
-    }
 
-    private func complianceAnalyticsProperties(_ result: DeviceComplianceResult) -> [String: Any?] {
-        let skipped = config.devMode || result.checksSkipped
-        return [
-            "is_compliant": skipped ? nil : result.isCompliant,
-            "is_jailbroken": skipped ? nil : result.isJailbroken,
-            "is_emulator": skipped ? nil : result.isSimulator,
-            "is_developer_mode_enabled": skipped ? nil : result.isDeveloperModeEnabled,
-            "is_debugger_attached": skipped ? nil : result.isDebuggerAttached,
-            "is_usb_debugging_enabled": nil,
-            "has_test_keys": nil,
-        ]
+        switch WebContentProcessRecovery.action(
+            isFlow: isFlow,
+            didRetryMain: didRetryAfterProcessTermination,
+            hasCurrentURL: currentURL != nil
+        ) {
+        case .closeFlow:
+            closeFlow()
+        case .reloadMain:
+            guard let currentURL else { return }
+            didRetryAfterProcessTermination = true
+            loadingView.isHidden = false
+            progressView.isHidden = false
+            loadingLabel.text = "Recovering checkout..."
+            webView.load(mainDocumentRequest(for: currentURL))
+        case .reportMainFailure:
+            deliverConnectionError(ConnectionError(
+                type: .unknown,
+                message: "The checkout WebView stopped unexpectedly.",
+                failedURL: currentURL
+            ))
+        }
     }
 
     private func connectionErrorProperties(_ error: ConnectionError) -> [String: Any?] {
         [
-            "error_code": error.errorCode.map(String.init),
+            "error_code": error.errorCode,
             "error_description": error.message,
             "url": AnalyticsSanitizer.navigationURL(error.failedURL),
             "is_recoverable": error.isRecoverable,

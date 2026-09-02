@@ -5,20 +5,17 @@ struct SDKRuntimeConfiguration: Equatable {
     let sentryDSN: String?
 
     static func load(
-        bundle: Bundle = .main,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         bundledValues: [String: String] = BundledTelemetryConfiguration.load()
     ) -> SDKRuntimeConfiguration {
         SDKRuntimeConfiguration(
             mixpanelToken: value(
                 key: "GLOMOPAY_MIXPANEL_TOKEN",
-                bundle: bundle,
                 environment: environment,
                 bundledValues: bundledValues
             ),
             sentryDSN: value(
                 key: "GLOMOPAY_SENTRY_DSN",
-                bundle: bundle,
                 environment: environment,
                 bundledValues: bundledValues
             )
@@ -27,13 +24,11 @@ struct SDKRuntimeConfiguration: Equatable {
 
     private static func value(
         key: String,
-        bundle: Bundle,
         environment: [String: String],
         bundledValues: [String: String]
     ) -> String? {
         [
             environment[key],
-            bundle.object(forInfoDictionaryKey: key) as? String,
             bundledValues[key],
         ]
         .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty }

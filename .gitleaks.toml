@@ -35,6 +35,6 @@ condition = "AND"
 paths = ['''^Sources/GlomoPaySDK/Resources/GlomoPayTelemetryConfiguration\.plist$''']
 regexTarget = "line"
 regexes = [
-  '''<string>[A-Fa-f0-9]{32}</string>''',
-  '''<string>https://[A-Fa-f0-9]+@[^<]+\.sentry\.io/[0-9]+</string>'''
+  '''<string>f3b37de98fb3d83e10a59850db442184</string>''',
+  '''<string>https://72cc1c1f34f0e42322759dc59bec7c26@o4508368252174336\.ingest\.de\.sentry\.io/4511931066744912</string>'''
 ]

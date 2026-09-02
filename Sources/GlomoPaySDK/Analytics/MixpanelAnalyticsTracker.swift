@@ -164,9 +164,9 @@ enum AnalyticsFactory {
         sessionID: String,
         flowType: String,
         errorReporter: SDKErrorReporting,
-        runtimeConfiguration: SDKRuntimeConfiguration = .load()
+        runtime: SDKTelemetryRuntime = .shared
     ) -> AnalyticsTracking {
-        guard let token = runtimeConfiguration.mixpanelToken else { return NoOpAnalyticsTracker() }
+        guard let transport = runtime.mixpanelTransport else { return NoOpAnalyticsTracker() }
         #if canImport(UIKit)
         let properties = { IOSAnalyticsProperties.collect() }
         #else
@@ -177,7 +177,7 @@ enum AnalyticsFactory {
             sessionID: sessionID,
             sdkVersion: GlomoPaySDKBuild.version,
             initialFlowType: flowType,
-            transport: MixpanelHTTPTransport(token: token),
+            transport: transport,
             errorReporter: errorReporter,
             deviceProperties: properties
         )

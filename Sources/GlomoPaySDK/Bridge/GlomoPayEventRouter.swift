@@ -6,20 +6,27 @@ final class GlomoPayEventRouter {
     private let onComplete: (GlomoPayResult) -> Void
     private let onWindowOpen: (URL) -> Void
     private let onWindowClose: () -> Void
+    private let analytics: AnalyticsTracking
+    private let errorReporter: SDKErrorReporting
     private var terminalDelivered = false
+    private(set) var latestFileAcceptTypes = ""
 
     init(
         listener: GlomoPayListener?,
         devMode: Bool,
         onComplete: @escaping (GlomoPayResult) -> Void,
         onWindowOpen: @escaping (URL) -> Void = { _ in },
-        onWindowClose: @escaping () -> Void = {}
+        onWindowClose: @escaping () -> Void = {},
+        analytics: AnalyticsTracking,
+        errorReporter: SDKErrorReporting
     ) {
         self.listener = listener
         self.devMode = devMode
         self.onComplete = onComplete
         self.onWindowOpen = onWindowOpen
         self.onWindowClose = onWindowClose
+        self.analytics = analytics
+        self.errorReporter = errorReporter
     }
 
     func handle(body: Any) {
@@ -27,6 +34,13 @@ final class GlomoPayEventRouter {
             let envelope = try dictionary(from: body)
             handle(envelope: envelope)
         } catch {
+            let schema = bridgeBodySchema(body)
+            analytics.track(AnalyticsEventName.invalidMessageReceived, properties: [
+                "webview_type": "main",
+                "data_type": schema.dataType,
+                "top_level_keys": schema.topLevelKeys.joined(separator: ","),
+                "byte_length": schema.byteLength,
+            ])
             emitError(message: error.localizedDescription)
         }
     }
@@ -39,9 +53,19 @@ final class GlomoPayEventRouter {
 
         switch type {
         case "console":
-            if devMode { emit("console", envelope) }
+            if devMode {
+                analytics.track(AnalyticsEventName.consoleLogCaptured, properties: [
+                    "level": envelope["level"] as? String,
+                    "message": AnalyticsSanitizer.text(envelope["message"] as? String ?? "", limit: 1_000),
+                ])
+                emit("console", envelope)
+            }
         case "window.open":
             if let rawURL = envelope["url"] as? String, let url = URL(string: rawURL) {
+                analytics.track(AnalyticsEventName.redirectOpened, properties: [
+                    "source": "main",
+                    "url": AnalyticsSanitizer.bankRedirectURL(url),
+                ])
                 onWindowOpen(url)
                 emit("redirect.started", ["url": rawURL])
             } else {
@@ -55,13 +79,28 @@ final class GlomoPayEventRouter {
                 handlePaymentEvent(data)
             }
         case "dependencies.failed_to_load":
+            let message = envelope["message"] as? String ?? "Checkout dependencies failed to load"
+            analytics.track(AnalyticsEventName.checkoutDependenciesFailed, properties: ["error_message": message])
+            errorReporter.capture(
+                operation: "checkout_dependencies",
+                error: RouterError(message),
+                context: ["source": "bridge"]
+            )
             emit("checkout.dependencies_failed", [
-                "message": envelope["message"] as? String ?? "Checkout dependencies failed to load",
+                "message": message,
                 "source": "bridge",
             ])
         case "file.input":
+            latestFileAcceptTypes = (envelope["accept"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            analytics.track(AnalyticsEventName.fileUploadRequested, properties: [
+                "accept_types": latestFileAcceptTypes,
+            ])
             emit("file.requested", envelope)
         default:
+            analytics.track(AnalyticsEventName.unsupportedFunctionalityUsed, properties: [
+                "name": type,
+            ])
             emit(type, envelope)
         }
     }
@@ -81,6 +120,7 @@ final class GlomoPayEventRouter {
         switch eventName {
         case "payment.success", "success":
             let payload = GlomoPayPayload(json: payloadData)
+            analytics.track(AnalyticsEventName.paymentSuccess, properties: ["payment_id": payload.paymentId])
             guard Validator.isValidPaymentPayload(payload) else {
                 emitError(message: "Invalid payment success payload")
                 return
@@ -88,6 +128,7 @@ final class GlomoPayEventRouter {
             complete(.success(payload))
         case "payment.bank_transfer_submitted":
             let payload = GlomoPayPayload(json: payloadData)
+            analytics.track(AnalyticsEventName.bankTransferSubmitted)
             guard !payload.orderId.isEmpty else {
                 emitError(message: "Invalid bank transfer payload")
                 return
@@ -95,15 +136,44 @@ final class GlomoPayEventRouter {
             complete(.success(payload))
         case "payment.failure", "payment.failed", "failed", "payment.error":
             let payload = GlomoPayPayload(json: payloadData)
+            analytics.track(AnalyticsEventName.paymentFailure, properties: [
+                "payment_id": payload.paymentId,
+                "reason": payloadData["reason"] ?? payloadData["message"],
+            ])
             guard Validator.isValidPaymentPayload(payload) else {
                 emitError(message: "Invalid payment failure payload")
                 return
             }
             complete(.failure(message: "Payment failed", code: nil), payload: payload)
         case "payment.pending", "pending":
+            let payload = GlomoPayPayload(json: payloadData)
+            analytics.track(AnalyticsEventName.paymentPending, properties: ["payment_id": payload.paymentId])
             break
-        case "payment.cancelled", "cancelled", "checkout.closed":
+        case "payment.cancelled", "cancelled":
+            analytics.track(AnalyticsEventName.paymentCancelled)
             complete(.cancelled, termination: .userDismiss)
+        case "checkout.closed":
+            analytics.track(AnalyticsEventName.paymentTerminated, properties: [
+                "termination_source": "checkout_closed",
+            ])
+            complete(.cancelled, termination: .userDismiss)
+        case "glomoCheckoutJourneyTerminate":
+            analytics.track(AnalyticsEventName.payViaBankCompleted, properties: [
+                "pay_via_bank_status": payloadData["status"],
+            ])
+        case "lrs.has_education_steps":
+            if payloadData["value"] as? Bool == true {
+                analytics.track(AnalyticsEventName.educationStepsShown, properties: [
+                    "source": payloadData["source"],
+                ])
+            }
+        case "lrs.education_steps_failed", "lrs.education_steps_failed_to_show":
+            analytics.track(AnalyticsEventName.educationStepsFailed, properties: [
+                "reason": payloadData["reason"] ?? "render_failed",
+            ])
+        case "dependencies.failed_to_load":
+            let message = payloadData["message"] as? String ?? "Checkout dependencies failed to load"
+            analytics.track(AnalyticsEventName.checkoutDependenciesFailed, properties: ["error_message": message])
         default:
             break
         }
@@ -130,7 +200,13 @@ final class GlomoPayEventRouter {
     }
 
     private func emitError(message: String) {
-        listener?.onSdkError([SdkError(type: .unknown, message: message)])
+        let error = SdkError(type: .unknown, message: message)
+        analytics.track(AnalyticsEventName.sdkError, properties: [
+            "error_count": 1,
+            "errors": SDKErrorAnalyticsSerializer.serialize([error]),
+        ])
+        errorReporter.capture(operation: "bridge_message", error: error, context: ["error_type": "unknown"])
+        listener?.onSdkError([error])
     }
 
     private func dictionary(from body: Any) throws -> [String: Any] {
@@ -142,4 +218,38 @@ final class GlomoPayEventRouter {
         }
         throw NSError(domain: "GlomoPayBridge", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unable to parse WebView bridge message"])
     }
+
+    private func bridgeBodySchema(_ body: Any) -> (dataType: String, topLevelKeys: [String], byteLength: Int) {
+        let keys: [String]
+        if let dictionary = body as? [String: Any] {
+            keys = Array(dictionary.keys)
+        } else if let string = body as? String,
+                  let data = string.data(using: .utf8),
+                  let dictionary = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            keys = Array(dictionary.keys)
+        } else {
+            keys = []
+        }
+
+        return (
+            dataType: String(describing: type(of: body)),
+            topLevelKeys: AnalyticsSanitizer.schemaKeys(keys),
+            byteLength: bridgeBodyByteLength(body)
+        )
+    }
+
+    private func bridgeBodyByteLength(_ body: Any) -> Int {
+        if let data = body as? Data { return data.count }
+        if let string = body as? String { return string.lengthOfBytes(using: .utf8) }
+        if JSONSerialization.isValidJSONObject(body),
+           let data = try? JSONSerialization.data(withJSONObject: body) {
+            return data.count
+        }
+        return 0
+    }
+}
+
+private struct RouterError: Error {
+    let message: String
+    init(_ message: String) { self.message = message }
 }

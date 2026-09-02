@@ -25,7 +25,42 @@ final class DeviceComplianceTests: XCTestCase {
         XCTAssertTrue(result.isSimulator)
         XCTAssertTrue(result.checksSkipped)
         XCTAssertFalse(result.isJailbroken)
-        XCTAssertFalse(result.isDebuggerAttached)
+        XCTAssertTrue(result.isDebuggerAttached)
+    }
+
+    func testSkippedComplianceAnalyticsKeepsRealDebuggerSignalAndReason() {
+        let result = DeviceComplianceResult(
+            isCompliant: true,
+            isJailbroken: false,
+            isDebuggerAttached: true,
+            isSimulator: true,
+            isDeveloperModeEnabled: false,
+            checksSkipped: true
+        )
+
+        let properties = ComplianceAnalyticsProperties.make(result: result, devMode: true)
+
+        XCTAssertEqual(properties["is_debugger_attached"] as? Bool, true)
+        XCTAssertEqual(properties["compliance_checks_skipped"] as? Bool, true)
+        XCTAssertNil(properties["is_compliant"] as? Bool)
+        XCTAssertNil(properties["is_jailbroken"] as? Bool)
+    }
+
+    func testStrictComplianceAnalyticsReportsChecksWereNotSkipped() {
+        let result = DeviceComplianceResult(
+            isCompliant: true,
+            isJailbroken: false,
+            isDebuggerAttached: false,
+            isSimulator: false,
+            isDeveloperModeEnabled: false,
+            checksSkipped: false
+        )
+
+        let properties = ComplianceAnalyticsProperties.make(result: result, devMode: false)
+
+        XCTAssertEqual(properties["compliance_checks_skipped"] as? Bool, false)
+        XCTAssertEqual(properties["is_compliant"] as? Bool, true)
+        XCTAssertEqual(properties["is_debugger_attached"] as? Bool, false)
     }
 
     func testStrictChecksBlockJailbrokenDevice() {

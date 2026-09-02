@@ -19,7 +19,9 @@ final class IntegrationFlowTests: XCTestCase {
             devMode: config.devMode,
             onComplete: { result in
                 if case .success = result { listener.completedCount += 1 }
-            }
+            },
+            analytics: NoOpAnalyticsTracker(),
+            errorReporter: NoOpSDKErrorReporter()
         )
         router.handle(envelope: [
             "type": "message",
@@ -86,7 +88,9 @@ final class IntegrationFlowTests: XCTestCase {
         let router = GlomoPayEventRouter(
             listener: listener,
             devMode: false,
-            onComplete: { results.append($0) }
+            onComplete: { results.append($0) },
+            analytics: NoOpAnalyticsTracker(),
+            errorReporter: NoOpSDKErrorReporter()
         )
 
         let success: [String: Any] = [

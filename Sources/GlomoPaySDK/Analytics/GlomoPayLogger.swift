@@ -17,11 +17,4 @@ public enum GlomoPayLogger {
         guard devMode else { return }
         print("[GlomoPay][ERROR] \(message)\(error.map { ": \($0.localizedDescription)" } ?? "")")
     }
-
-    /// Local developer-mode diagnostics only; no network transport is used.
-    public static func analytics(_ message: String) {
-        if devMode {
-            print("[GlomoPay][Analytics] \(message)")
-        }
-    }
 }

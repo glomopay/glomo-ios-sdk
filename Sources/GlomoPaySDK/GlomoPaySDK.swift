@@ -31,18 +31,24 @@ public final class GlomoPaySDK {
         animated: Bool = true,
         completion: (() -> Void)? = nil
     ) {
-        let checkout = GlomoPayCheckoutViewController(
-            config: config,
-            orderType: orderType,
-            listener: listener
-        )
-        let navigationController = UINavigationController(rootViewController: checkout)
-        navigationController.modalPresentationStyle = .pageSheet
-        if #available(iOS 15.0, *) {
-            navigationController.sheetPresentationController?.prefersGrabberVisible = true
-            navigationController.sheetPresentationController?.prefersScrollingExpandsWhenScrolledToEdge = false
+        Task { @MainActor [weak presenter] in
+            let telemetryRuntime = await SDKTelemetryRuntime.prepared()
+            guard let presenter else { return }
+            let checkout = GlomoPayCheckoutViewController(
+                config: config,
+                orderType: orderType,
+                listener: listener,
+                apiClient: nil,
+                telemetryRuntime: telemetryRuntime
+            )
+            let navigationController = UINavigationController(rootViewController: checkout)
+            navigationController.modalPresentationStyle = .pageSheet
+            if #available(iOS 15.0, *) {
+                navigationController.sheetPresentationController?.prefersGrabberVisible = true
+                navigationController.sheetPresentationController?.prefersScrollingExpandsWhenScrolledToEdge = false
+            }
+            presenter.present(navigationController, animated: animated, completion: completion)
         }
-        presenter.present(navigationController, animated: animated, completion: completion)
     }
 #endif
 }

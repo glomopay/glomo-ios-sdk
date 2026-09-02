@@ -19,5 +19,10 @@ Pod::Spec.new do |spec|
   spec.ios.deployment_target = "15.0"
   spec.swift_version = "5.9"
   spec.source_files = "Sources/GlomoPaySDK/**/*.swift"
+  spec.resource_bundles = {
+    "GlomoPaySDKPrivacy" => ["Sources/GlomoPaySDK/Resources/PrivacyInfo.xcprivacy"],
+    "GlomoPaySDKConfiguration" => ["Sources/GlomoPaySDK/Resources/GlomoPayTelemetryConfiguration.plist"]
+  }
   spec.frameworks = "Foundation", "UIKit", "WebKit"
+  spec.dependency "Sentry/Core", "~> 8.58"
 end

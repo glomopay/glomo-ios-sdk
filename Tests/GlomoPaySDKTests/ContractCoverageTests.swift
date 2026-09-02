@@ -2,6 +2,25 @@ import XCTest
 @testable import GlomoPaySDK
 
 final class ContractCoverageTests: XCTestCase {
+    func testWebContentProcessRecoveryRetriesMainOnceAndClosesFlow() {
+        XCTAssertEqual(
+            WebContentProcessRecovery.action(isFlow: true, didRetryMain: false, hasCurrentURL: true),
+            .closeFlow
+        )
+        XCTAssertEqual(
+            WebContentProcessRecovery.action(isFlow: false, didRetryMain: false, hasCurrentURL: true),
+            .reloadMain
+        )
+        XCTAssertEqual(
+            WebContentProcessRecovery.action(isFlow: false, didRetryMain: true, hasCurrentURL: true),
+            .reportMainFailure
+        )
+        XCTAssertEqual(
+            WebContentProcessRecovery.action(isFlow: false, didRetryMain: false, hasCurrentURL: false),
+            .reportMainFailure
+        )
+    }
+
     func testValidatorAcceptsSupportedKeyPrefixesAndRejectsUnknownKeys() {
         XCTAssertTrue(Validator.isValidPublicKey("live_123456"))
         XCTAssertTrue(Validator.isValidPublicKey("test_123456"))
@@ -125,7 +144,9 @@ final class ContractCoverageTests: XCTestCase {
         let router = GlomoPayEventRouter(
             listener: listener,
             devMode: false,
-            onComplete: { _ in }
+            onComplete: { _ in },
+            analytics: NoOpAnalyticsTracker(),
+            errorReporter: NoOpSDKErrorReporter()
         )
 
         router.handle(envelope: ["type": "window.open", "url": "https://bank.example"])
@@ -146,7 +167,13 @@ final class ContractCoverageTests: XCTestCase {
 
     func testBridgeRejectsMalformedEnvelopeAndInvalidWindowURL() {
         let listener = ContractCoverageListener()
-        let router = GlomoPayEventRouter(listener: listener, devMode: false, onComplete: { _ in })
+        let router = GlomoPayEventRouter(
+            listener: listener,
+            devMode: false,
+            onComplete: { _ in },
+            analytics: NoOpAnalyticsTracker(),
+            errorReporter: NoOpSDKErrorReporter()
+        )
 
         router.handle(envelope: [:])
         router.handle(envelope: ["type": "window.open", "url": "http://[invalid"])
@@ -160,7 +187,9 @@ final class ContractCoverageTests: XCTestCase {
         let router = GlomoPayEventRouter(
             listener: listener,
             devMode: false,
-            onComplete: { _ in }
+            onComplete: { _ in },
+            analytics: NoOpAnalyticsTracker(),
+            errorReporter: NoOpSDKErrorReporter()
         )
         let event: [String: Any] = [
             "type": "message",

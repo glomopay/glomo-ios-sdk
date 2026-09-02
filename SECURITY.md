@@ -23,3 +23,7 @@ The SDK accepts the merchant's **publishable key**, which is intended for
 client-side use and does not grant read access to merchant or payment data.
 Reports solely about the visibility of that publishable key will be closed as
 intended behaviour.
+
+The SDK also bundles a Mixpanel project token and Sentry DSN. These are
+publishable client-side identifiers that provide no read access to either
+service. Sentry auth tokens and symbol-upload credentials are never bundled.

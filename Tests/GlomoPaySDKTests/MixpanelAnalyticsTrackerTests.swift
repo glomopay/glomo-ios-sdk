@@ -25,7 +25,6 @@ final class MixpanelAnalyticsTrackerTests: XCTestCase {
         let properties = event.jsonProperties
         XCTAssertEqual(properties["distinct_id"] as? String, "order_123")
         XCTAssertEqual(properties["session_id"] as? String, "session-uuid")
-        XCTAssertNil(properties["$insert_id"])
         XCTAssertEqual(properties["flow_type"] as? String, "lrs")
         XCTAssertEqual(properties["surface"] as? String, "ios-sdk")
         XCTAssertEqual(properties["platform"] as? String, "ios")

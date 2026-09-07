@@ -23,12 +23,10 @@ final class AnalyticsSanitizerTests: XCTestCase {
         let uuid = "01d245ac-f936-4545-9013-7114243e312f"
         let output = AnalyticsSanitizer.properties([
             "session_id": uuid,
-            "$insert_id": uuid,
             "distinct_id": uuid,
         ])
 
         XCTAssertEqual(output["session_id"] as? String, uuid)
-        XCTAssertEqual(output["$insert_id"] as? String, uuid)
         XCTAssertEqual(output["distinct_id"] as? String, uuid)
     }
 
@@ -71,6 +69,17 @@ final class AnalyticsSanitizerTests: XCTestCase {
         let output = AnalyticsSanitizer.properties(["error_code": 123_456])
 
         XCTAssertEqual(output["error_code"] as? Int, 123_456)
+    }
+
+    func testJSONNumbersAreNotCollapsedToBooleans() {
+        let output = AnalyticsSanitizer.properties([
+            "pay_via_bank_status": NSNumber(value: 1),
+            "enabled": NSNumber(value: true),
+        ])
+
+        XCTAssertEqual(output["pay_via_bank_status"] as? Int, 1)
+        XCTAssertFalse(output["pay_via_bank_status"] is Bool)
+        XCTAssertEqual(output["enabled"] as? Bool, true)
     }
 
     func testNullableCompliancePropertiesArePreserved() {

@@ -80,12 +80,13 @@ enum AnalyticsSanitizer {
 
     private static func sanitize(_ value: Any) -> Any? {
         switch value {
-        case let value as Bool: return value
+        case let value as NSNumber where isBooleanNumber(value): return value.boolValue
         case let value as Int: return value
         case let value as Int64: return value
         case let value as Double: return value
         case let value as Float: return value
-        case let value as NSNumber: return value
+        case let value as NSNumber: return sanitizeNumber(value)
+        case let value as Bool: return value
         case let value as String: return String(value.prefix(1_000))
         default: return text(String(describing: value), limit: 1_000)
         }
@@ -94,14 +95,26 @@ enum AnalyticsSanitizer {
     private static func sanitizeIdentifier(_ value: Any) -> Any? {
         switch value {
         case let value as String: return value
-        case let value as Bool: return value
+        case let value as NSNumber where isBooleanNumber(value): return value.boolValue
         case let value as Int: return value
         case let value as Int64: return value
         case let value as Double: return value
         case let value as Float: return value
-        case let value as NSNumber: return value
+        case let value as NSNumber: return sanitizeNumber(value)
+        case let value as Bool: return value
         default: return nil
         }
+    }
+
+    private static func sanitizeNumber(_ value: NSNumber) -> Any {
+        if CFNumberIsFloatType(value) {
+            return value.doubleValue
+        }
+        return value.int64Value
+    }
+
+    private static func isBooleanNumber(_ value: NSNumber) -> Bool {
+        CFGetTypeID(value) == CFBooleanGetTypeID()
     }
 
     private static func redact(_ value: String) -> String {

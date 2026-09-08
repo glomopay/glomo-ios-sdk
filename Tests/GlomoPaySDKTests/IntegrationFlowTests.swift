@@ -82,6 +82,13 @@ final class IntegrationFlowTests: XCTestCase {
         XCTAssertEqual(url.host, "checkout.glomopay.com")
     }
 
+    func testRetryKeepsResolvedOrderTypeInsteadOfRequestedAutoType() {
+        var state = CheckoutFlowTypeState(requestedOrderType: "auto")
+        state.resolve("lrs")
+
+        XCTAssertEqual(state.currentOrderType, "lrs")
+    }
+
     func testBridgeTerminalResultIsDeliveredOnceDuringRegressionFlow() {
         let listener = IntegrationListener()
         var results: [GlomoPayResult] = []

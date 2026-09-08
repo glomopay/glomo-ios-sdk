@@ -24,6 +24,7 @@ final class MixpanelAnalyticsTracker: AnalyticsTracking {
     private let lock = NSLock()
     private var flowType: String
     private var checkoutURL: URL?
+    private var networkSnapshotProperties: [String: Any?] = [:]
 
     init(
         config: GlomoPayConfig,
@@ -53,12 +54,17 @@ final class MixpanelAnalyticsTracker: AnalyticsTracking {
         lock.withLock { checkoutURL = url }
     }
 
+    func updateNetworkSnapshotProperties(_ properties: [String: Any?]) {
+        cacheNetworkSnapshot(from: properties)
+    }
+
     func track(_ event: String, properties: [String: Any?]) {
         errorReporter.addBreadcrumb(category: "analytics", message: event, data: ["event_name": event])
         let date = now()
-        let state = lock.withLock { (flowType, checkoutURL) }
+        let state = lock.withLock { (flowType, checkoutURL, networkSnapshotProperties) }
         let analyticsOrderID = config.checkoutId
         var common = deviceProperties()
+        common.merge(state.2) { _, snapshotValue in snapshotValue }
         common.merge([
             "sdk_version": sdkVersion,
             "sdk_source": "glomo-ios-sdk",
@@ -77,6 +83,7 @@ final class MixpanelAnalyticsTracker: AnalyticsTracking {
             "distinct_id": analyticsOrderID,
         ]) { _, new in new }
         common.merge(properties) { _, new in new }
+        cacheNetworkSnapshot(from: properties)
         let sanitizedProperties = AnalyticsSanitizer.properties(common)
         let analyticsEvent = AnalyticsEvent(
             name: event,
@@ -106,6 +113,18 @@ final class MixpanelAnalyticsTracker: AnalyticsTracking {
 
     private static func formattedTimestamp(_ date: Date) -> String {
         timestampLock.withLock { timestampFormatter.string(from: date) }
+    }
+
+    private func cacheNetworkSnapshot(from properties: [String: Any?]) {
+        let snapshotKeys = ["$wifi_enabled", "$cellular_enabled"]
+        let snapshot = snapshotKeys.reduce(into: [String: Any?]()) { output, key in
+            guard let value = properties[key], value != nil else { return }
+            output[key] = value
+        }
+        guard !snapshot.isEmpty else { return }
+        lock.withLock {
+            networkSnapshotProperties.merge(snapshot) { _, new in new }
+        }
     }
 }
 

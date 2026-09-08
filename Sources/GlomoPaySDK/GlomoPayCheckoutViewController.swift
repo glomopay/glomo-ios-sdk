@@ -40,6 +40,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private var performanceSnapshotCollector: DevicePerformanceSnapshotCollector?
     private var networkSnapshotCollector: IOSNetworkPathSnapshotCollector?
     private var didStartCheckout = false
+    var flowTypeState: CheckoutFlowTypeState
 
     public convenience init(
         config: GlomoPayConfig,
@@ -73,6 +74,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         )
         self.config = config
         self.requestedOrderType = normalizedOrderType
+        self.flowTypeState = CheckoutFlowTypeState(requestedOrderType: normalizedOrderType)
         self.listener = listener
         self.apiClient = apiClient ?? GlomoPayApiClient(publicKey: config.publicKey, devMode: config.devMode)
         self.sessionID = sessionID
@@ -251,23 +253,28 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private func startCheckout() {
         guard !didStartCheckout else { return }
         didStartCheckout = true
+        continueCheckout()
+        startNetworkSnapshotCollection()
+    }
+
+    private func startNetworkSnapshotCollection() {
+        guard !didTerminate else { return }
         let collector = IOSAnalyticsProperties.makeNetworkSnapshotCollector()
         networkSnapshotCollector = collector
         collector.collect { [weak self] networkProperties in
             DispatchQueue.main.async {
                 guard let self, !self.didTerminate else { return }
                 self.networkSnapshotCollector = nil
-                self.continueCheckout(networkProperties: networkProperties)
+                self.analytics.updateNetworkSnapshotProperties(networkProperties)
             }
         }
     }
 
-    private func continueCheckout(networkProperties: [String: Any?]) {
+    private func continueCheckout() {
         if !didTrackSDKInitialization {
             didTrackSDKInitialization = true
             var properties = performanceSnapshotCollector?.collect()
                 ?? DevicePerformanceSnapshot.emptyProperties
-            properties.merge(networkProperties) { _, networkValue in networkValue }
             analytics.track(AnalyticsEventName.sdkInitialized, properties: properties)
         }
         let errors = Validator.validate(config: config)
@@ -322,6 +329,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private func resolveOrderType() async -> String {
         if requestedOrderType != "auto" || config.isSubscription || config.orderId == nil {
             let resolved = requestedOrderType == "auto" ? "standard" : requestedOrderType
+            flowTypeState.resolve(resolved)
             analytics.updateFlowType(resolved)
             errorReporter.updateFlowType(resolved)
             analytics.track(AnalyticsEventName.orderTypeResolved, properties: ["resolved_type": resolved])
@@ -332,6 +340,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         do {
             let order = try await apiClient.fetchOrder(config.orderId!)
             let type = ConfigManager.detectOrderType(order)
+            flowTypeState.resolve(type)
             analytics.updateFlowType(type)
             errorReporter.updateFlowType(type)
             analytics.track(AnalyticsEventName.orderTypeResolved, properties: ["resolved_type": type])
@@ -339,6 +348,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             return type
         } catch {
             // Flutter continues with standard checkout if order detection fails.
+            flowTypeState.resolve("standard")
             analytics.updateFlowType("standard")
             errorReporter.updateFlowType("standard")
             analytics.track(AnalyticsEventName.orderTypeDetectionFailed, properties: [
@@ -353,6 +363,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     @MainActor
     private func loadCheckout(url: URL, orderType: String) {
         currentURL = url
+        flowTypeState.resolve(orderType)
         analytics.updateFlowType(orderType)
         analytics.updateCheckoutURL(url)
         errorReporter.updateFlowType(orderType)
@@ -822,7 +833,11 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         errorView = nil
         didRetryMainDocument = false
         didRetryAfterProcessTermination = false
-        currentURL.map { loadCheckout(url: $0, orderType: requestedOrderType) }
+        currentURL.map { loadCheckout(url: $0, orderType: orderTypeForCurrentCheckoutLoad()) }
+    }
+
+    func orderTypeForCurrentCheckoutLoad() -> String {
+        flowTypeState.currentOrderType
     }
 
     @objc private func closeTapped() {
@@ -882,6 +897,9 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         case .reloadMain:
             guard let currentURL else { return }
             didRetryAfterProcessTermination = true
+            let flowType = orderTypeForCurrentCheckoutLoad()
+            analytics.updateFlowType(flowType)
+            errorReporter.updateFlowType(flowType)
             loadingView.isHidden = false
             progressView.isHidden = false
             loadingLabel.text = "Recovering checkout..."

@@ -79,6 +79,31 @@ final class MixpanelAnalyticsTrackerTests: XCTestCase {
         XCTAssertEqual(properties["ram_available_bytes"] as? Int64, 120_000_000)
     }
 
+    func testResolvedNetworkSnapshotIsMergedIntoSubsequentEvents() async throws {
+        let transport = RecordingAnalyticsTransport()
+        let tracker = MixpanelAnalyticsTracker(
+            config: GlomoPayConfig(publicKey: "test_public_key", orderId: "order_123"),
+            sessionID: "session-uuid",
+            sdkVersion: "1.0.0",
+            initialFlowType: "auto",
+            transport: transport,
+            errorReporter: NoOpSDKErrorReporter(),
+            deviceProperties: { [:] }
+        )
+
+        tracker.track(AnalyticsEventName.sdkInitialized, properties: [
+            "$wifi_enabled": true,
+            "$cellular_enabled": false,
+        ])
+        _ = try await transport.nextEvent()
+
+        tracker.track(AnalyticsEventName.checkoutStarted)
+        let properties = try await transport.nextEvent().jsonProperties
+
+        XCTAssertEqual(properties["$wifi_enabled"] as? Bool, true)
+        XCTAssertEqual(properties["$cellular_enabled"] as? Bool, false)
+    }
+
     func testRuntimeConfigurationTrimsValuesAndDisablesBlankConfiguration() {
         let configured = SDKRuntimeConfiguration.load(environment: [
             "GLOMOPAY_MIXPANEL_TOKEN": " token ",

@@ -127,8 +127,6 @@ enum IOSAnalyticsProperties {
             "$locale": Locale.current.identifier.replacingOccurrences(of: "_", with: "-"),
             "$lib_version": GlomoPaySDKBuild.version,
             "mp_lib": "glomo-ios-sdk",
-            "$wifi_enabled": nil,
-            "$cellular_enabled": nil,
         ]
     }
 

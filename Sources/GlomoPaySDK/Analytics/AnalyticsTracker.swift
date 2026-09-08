@@ -4,12 +4,15 @@ protocol AnalyticsTracking: AnyObject {
     func track(_ event: String, properties: [String: Any?])
     func updateFlowType(_ flowType: String)
     func updateCheckoutURL(_ url: URL)
+    func updateNetworkSnapshotProperties(_ properties: [String: Any?])
 }
 
 extension AnalyticsTracking {
     func track(_ event: String) {
         track(event, properties: [:])
     }
+
+    func updateNetworkSnapshotProperties(_ properties: [String: Any?]) {}
 }
 
 final class NoOpAnalyticsTracker: AnalyticsTracking {

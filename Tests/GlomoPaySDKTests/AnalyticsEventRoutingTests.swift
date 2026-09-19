@@ -1,5 +1,5 @@
 import XCTest
-import UniformTypeIdentifiers
+
 @testable import GlomoPaySDK
 
 final class AnalyticsEventRoutingTests: XCTestCase {
@@ -20,9 +20,17 @@ final class AnalyticsEventRoutingTests: XCTestCase {
                 "payload": ["orderId": "order_123", "paymentId": "pay_123"],
             ],
         ])
+        // The hosted page's contract is { event, hasContent }. The previous `value` read matched
+        // a field the page never sends, so the signal was silently dropped.
         router.handle(envelope: [
             "type": "message",
             "data": ["type": "lrs.has_education_steps", "value": true],
+        ])
+        XCTAssertEqual(analytics.events.map(\.name), [AnalyticsEventName.paymentPending])
+
+        router.handle(envelope: [
+            "type": "message",
+            "data": ["type": "lrs.has_education_steps", "hasContent": true],
         ])
 
         XCTAssertEqual(analytics.events.map(\.name), [
@@ -93,7 +101,10 @@ final class AnalyticsEventRoutingTests: XCTestCase {
         XCTAssertEqual(analytics.events.last?.properties["name"] as? String, "merchant.unsupported_action")
     }
 
-    func testFileInputStoresRequestedAcceptTypesForNativePicker() {
+    /// The accept types are reported, not retained: the SDK no longer filters a picker with them,
+    /// so there is nothing to store - and the stored value used to be read a run loop turn before
+    /// it was written.
+    func testFileInputReportsRequestedAcceptTypesWithoutRetainingThem() {
         let analytics = RecordingAnalyticsTracker()
         let router = GlomoPayEventRouter(
             listener: nil,
@@ -108,26 +119,48 @@ final class AnalyticsEventRoutingTests: XCTestCase {
             "accept": " application/pdf, image/* ",
         ])
 
-        XCTAssertEqual(router.latestFileAcceptTypes, "application/pdf, image/*")
+        XCTAssertEqual(analytics.events.last?.name, AnalyticsEventName.fileUploadRequested)
         XCTAssertEqual(
             analytics.events.last?.properties["accept_types"] as? String,
             "application/pdf, image/*"
         )
     }
 
-    @available(macOS 11.0, *)
-    func testFileAcceptTypesResolveMIMEsExtensionsAndFallback() {
-        let resolved = FileAcceptTypeResolver.contentTypes(
-            for: "application/pdf, image/*, .heic, application/pdf"
+    // The accept-type to UTType resolver is gone with the document picker: the SDK does not
+    // implement runOpenPanelWith, so WebKit owns the sheet and nothing maps accept types to
+    // content types. v2.0.0's position is that accept selects which picker opens and never
+    // restricts what may be chosen, so there is nothing to reintroduce here.
+
+    func testWindowOpenRejectsNonHTTPURLsAndReportsTheContractBreak() {
+        let analytics = RecordingAnalyticsTracker()
+        let reporter = RecordingSDKErrorReporter()
+        var opened: [URL] = []
+        let router = GlomoPayEventRouter(
+            listener: nil,
+            devMode: false,
+            onComplete: { _ in },
+            onWindowOpen: { opened.append($0) },
+            analytics: analytics,
+            errorReporter: reporter
         )
 
-        XCTAssertTrue(resolved.contains(where: { $0.conforms(to: .pdf) }))
-        XCTAssertTrue(resolved.contains(where: { $0.conforms(to: .image) }))
-        XCTAssertEqual(resolved.filter { $0.conforms(to: .pdf) }.count, 1)
-        XCTAssertEqual(FileAcceptTypeResolver.contentTypes(for: "").map(\.identifier), [UTType.item.identifier])
-        XCTAssertEqual(
-            FileAcceptTypeResolver.contentTypes(for: "not-a-valid-type").map(\.identifier),
-            [UTType.item.identifier]
+        for rawURL in [
+            "javascript:alert(1)",
+            "data:text/html,<h1>x</h1>",
+            "file:///etc/passwd",
+            "about:blank",
+            "upi://pay",
+            "https://",
+            "https://user:pass@bank.example",
+        ] {
+            router.handle(envelope: ["type": "window.open", "url": rawURL])
+        }
+        router.handle(envelope: ["type": "window.open", "url": "https://bank.example/3ds"])
+
+        XCTAssertEqual(opened.map(\.absoluteString), ["https://bank.example/3ds"])
+        XCTAssertEqual(reporter.operations.filter { $0 == "window_open_rejected" }.count, 7)
+        XCTAssertTrue(
+            analytics.events.contains { $0.name == AnalyticsEventName.nonHTTPNavigationAttempted }
         )
     }
 
@@ -186,6 +219,15 @@ final class AnalyticsEventRoutingTests: XCTestCase {
             }
             return try String(contentsOf: url, encoding: .utf8)
         }.joined(separator: "\n")
+    }
+}
+
+private final class RecordingSDKErrorReporter: SDKErrorReporting, @unchecked Sendable {
+    var operations: [String] = []
+    func updateFlowType(_ flowType: String) {}
+    func addBreadcrumb(category: String, message: String, data: [String: Any?]) {}
+    func capture(operation: String, error: Error, context: [String: Any?]) {
+        operations.append(operation)
     }
 }
 

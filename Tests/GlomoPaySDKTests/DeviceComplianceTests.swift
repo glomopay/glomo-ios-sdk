@@ -2,16 +2,23 @@ import XCTest
 @testable import GlomoPaySDK
 
 final class DeviceComplianceTests: XCTestCase {
-    func testLiveNonDevModeRequiresStrictChecks() {
-        XCTAssertTrue(CompliancePolicy.requiresStrictCheck(
-            GlomoPayConfig(publicKey: "live_public_key", orderId: "order_123456")
-        ))
-        XCTAssertFalse(CompliancePolicy.requiresStrictCheck(
-            GlomoPayConfig(publicKey: "live_public_key", orderId: "order_123456", devMode: true)
-        ))
-        XCTAssertFalse(CompliancePolicy.requiresStrictCheck(
-            GlomoPayConfig(publicKey: "test_public_key", orderId: "order_123456")
-        ))
+    func testLiveKeysAlwaysRequireStrictChecksForAnyMerchantConfiguration() {
+        let liveConfig = GlomoPayConfig(publicKey: "live_public_key", orderId: "order_123456")
+        let testConfig = GlomoPayConfig(publicKey: "test_public_key", orderId: "order_123456")
+
+        // There is no merchant-settable flag left that can relax this. `devMode: true` with a
+        // live key used to skip the jailbreak and debugger block entirely.
+        XCTAssertTrue(CompliancePolicy.requiresStrictCheck(liveConfig))
+        XCTAssertFalse(CompliancePolicy.requiresStrictCheck(testConfig))
+    }
+
+    func testOnlyAnInternalSDKBuildRelaxesTheLiveDeviceBlock() {
+        let liveConfig = GlomoPayConfig(publicKey: "live_public_key", orderId: "order_123456")
+
+        XCTAssertTrue(CompliancePolicy.requiresStrictCheck(liveConfig, internalBuild: false))
+        XCTAssertFalse(CompliancePolicy.requiresStrictCheck(liveConfig, internalBuild: true))
+        // Fails closed: a shipped build has the flag absent, so it is never an internal build.
+        XCTAssertFalse(SDKBuildFlags.internalBuild)
     }
 
     func testSkippedChecksAllowDevelopmentAndExposeDiagnostics() {
@@ -38,7 +45,7 @@ final class DeviceComplianceTests: XCTestCase {
             checksSkipped: true
         )
 
-        let properties = ComplianceAnalyticsProperties.make(result: result, devMode: true)
+        let properties = ComplianceAnalyticsProperties.make(result: result)
 
         XCTAssertEqual(properties["is_debugger_attached"] as? Bool, true)
         XCTAssertEqual(properties["compliance_checks_skipped"] as? Bool, true)
@@ -56,7 +63,7 @@ final class DeviceComplianceTests: XCTestCase {
             checksSkipped: false
         )
 
-        let properties = ComplianceAnalyticsProperties.make(result: result, devMode: false)
+        let properties = ComplianceAnalyticsProperties.make(result: result)
 
         XCTAssertEqual(properties["compliance_checks_skipped"] as? Bool, false)
         XCTAssertEqual(properties["is_compliant"] as? Bool, true)

@@ -28,6 +28,31 @@ jobs:
       - name: Test
         run: swift test -v
 
+  # swift test builds for macOS, where canImport(UIKit) is false, so the entire checkout
+  # controller - every WebView behaviour in the SDK - is compiled out of that test binary. This
+  # job is the only one that both compiles and runs it.
+  ios-simulator:
+    name: iOS simulator tests
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Show toolchain
+        run: xcodebuild -version
+      - name: List simulators
+        run: xcrun simctl list devices available
+      - name: Test on iOS destination
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme glomo-ios-sdk \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -skipMacroValidation \
+            | xcpretty || xcodebuild test \
+            -scheme glomo-ios-sdk \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -skipMacroValidation
+
   podspec:
     name: Podspec lint
     runs-on: macos-15

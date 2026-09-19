@@ -6,10 +6,10 @@ final class GlomoPayEventRouter {
     private let onComplete: (GlomoPayResult) -> Void
     private let onWindowOpen: (URL) -> Void
     private let onWindowClose: () -> Void
+    private let onBridgeReady: () -> Void
     private let analytics: AnalyticsTracking
     private let errorReporter: SDKErrorReporting
     private var terminalDelivered = false
-    private(set) var latestFileAcceptTypes = ""
 
     init(
         listener: GlomoPayListener?,
@@ -17,6 +17,7 @@ final class GlomoPayEventRouter {
         onComplete: @escaping (GlomoPayResult) -> Void,
         onWindowOpen: @escaping (URL) -> Void = { _ in },
         onWindowClose: @escaping () -> Void = {},
+        onBridgeReady: @escaping () -> Void = {},
         analytics: AnalyticsTracking,
         errorReporter: SDKErrorReporting
     ) {
@@ -25,6 +26,7 @@ final class GlomoPayEventRouter {
         self.onComplete = onComplete
         self.onWindowOpen = onWindowOpen
         self.onWindowClose = onWindowClose
+        self.onBridgeReady = onBridgeReady
         self.analytics = analytics
         self.errorReporter = errorReporter
     }
@@ -52,28 +54,46 @@ final class GlomoPayEventRouter {
         }
 
         switch type {
+        case "bridge.ready":
+            // "The page is alive" is known here, by which case received the message - no host
+            // event channel and no unprefixed-name heuristic needed to derive it.
+            onBridgeReady()
         case "console":
             if devMode {
                 analytics.track(AnalyticsEventName.consoleLogCaptured, properties: [
                     "level": envelope["level"] as? String,
                     "message": AnalyticsSanitizer.text(envelope["message"] as? String ?? "", limit: 1_000),
                 ])
-                emit("console", envelope)
             }
         case "window.open":
-            if let rawURL = envelope["url"] as? String, let url = URL(string: rawURL) {
-                analytics.track(AnalyticsEventName.redirectOpened, properties: [
-                    "source": "main",
-                    "url": AnalyticsSanitizer.bankRedirectURL(url),
+            // URL(string:) is a parse, not a check: it happily returns a valid URL for
+            // javascript:, data: and file:. Validate before anything can navigate.
+            guard let rawURL = envelope["url"] as? String,
+                  Validator.isValidUrl(rawURL),
+                  let url = URL(string: rawURL) else {
+                let scheme = (envelope["url"] as? String)
+                    .flatMap { URLComponents(string: $0)?.scheme?.lowercased() } ?? "none"
+                analytics.track(AnalyticsEventName.nonHTTPNavigationAttempted, properties: [
+                    "scheme": scheme,
+                    "webview_type": "bridge",
                 ])
-                onWindowOpen(url)
-                emit("redirect.started", ["url": rawURL])
-            } else {
+                // A page sending an unusable window.open URL is a contract break, not noise:
+                // Flutter drops it silently and that is the part not worth copying.
+                errorReporter.capture(
+                    operation: "window_open_rejected",
+                    error: RouterError("window.open URL rejected"),
+                    context: ["scheme": scheme]
+                )
                 emitError(message: "window.open has an invalid URL")
+                return
             }
+            analytics.track(AnalyticsEventName.redirectOpened, properties: [
+                "source": "main",
+                "url": AnalyticsSanitizer.bankRedirectURL(url),
+            ])
+            onWindowOpen(url)
         case "window.close":
             onWindowClose()
-            emit("redirect.completed", [:])
         case "message":
             if let data = envelope["data"] as? [String: Any] {
                 handlePaymentEvent(data)
@@ -86,22 +106,22 @@ final class GlomoPayEventRouter {
                 error: RouterError(message),
                 context: ["source": "bridge"]
             )
-            emit("checkout.dependencies_failed", [
-                "message": message,
-                "source": "bridge",
-            ])
         case "file.input":
-            latestFileAcceptTypes = (envelope["accept"] as? String ?? "")
+            // Reported, not retained. The accept types were stored for the document picker to
+            // filter with, which is the client-side filter that has been removed: `accept` selects
+            // which picker opens and never restricts what may be chosen, because the bank
+            // re-validates every upload. The stored value was also read a run loop turn before it
+            // was written, so the first upload of a session filtered on nothing - that race is
+            // gone with the property rather than fixed.
+            let acceptTypes = (envelope["accept"] as? String ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             analytics.track(AnalyticsEventName.fileUploadRequested, properties: [
-                "accept_types": latestFileAcceptTypes,
+                "accept_types": acceptTypes,
             ])
-            emit("file.requested", envelope)
         default:
             analytics.track(AnalyticsEventName.unsupportedFunctionalityUsed, properties: [
                 "name": type,
             ])
-            emit(type, envelope)
         }
     }
 
@@ -110,7 +130,6 @@ final class GlomoPayEventRouter {
             ?? data["event"] as? String
             ?? data["status"] as? String
 
-        if let eventName { emit(eventName, data) }
 
         var payloadData = data
         if let nested = data["payload"] as? [String: Any] {
@@ -126,24 +145,46 @@ final class GlomoPayEventRouter {
                 return
             }
             complete(.success(payload))
+        // A submitted bank transfer is a journey, not a payment: there is no paymentId and no
+        // signature, so there is nothing a host's backend can verify. Reporting it through
+        // onPaymentSuccess told merchants money had moved when it had not.
         case "payment.bank_transfer_submitted":
-            let payload = GlomoPayPayload(json: payloadData)
             analytics.track(AnalyticsEventName.bankTransferSubmitted)
-            guard !payload.orderId.isEmpty else {
-                emitError(message: "Invalid bank transfer payload")
+            let journey = GlomoPayUserJourneyPayload(
+                journeyType: .bankTransferSubmitted,
+                json: payloadData
+            )
+            guard !journey.orderId.isEmpty else {
+                // Rejected, but never silently, and not as a generic SDK error either: a dropped
+                // journey must leave a trace that says which journey it was.
+                errorReporter.capture(
+                    operation: "thin_bank_transfer_payload",
+                    error: RouterError("Bank transfer payload carried no orderId"),
+                    context: ["keys": AnalyticsSanitizer.schemaKeys(Array(payloadData.keys)).joined(separator: ",")]
+                )
                 return
             }
-            complete(.success(payload))
+            complete(.userJourney(journey))
+        // Delivered on the event name alone. The previous rule also required a signature, which a
+        // failure payload has never carried - that field exists so a host can verify a success -
+        // so onPaymentFailure never fired for a confirmed decline, and the host got an
+        // onSdkError describing the SDK's own guard instead. Do not substitute another schema
+        // check here: replacing one guess about the page's schema with another invites the same
+        // silent misroute the next time that schema moves.
         case "payment.failure", "payment.failed", "failed", "payment.error":
             let payload = GlomoPayPayload(json: payloadData)
             analytics.track(AnalyticsEventName.paymentFailure, properties: [
                 "payment_id": payload.paymentId,
                 "reason": payloadData["reason"] ?? payloadData["message"],
             ])
-            guard Validator.isValidPaymentPayload(payload) else {
-                emitError(message: "Invalid payment failure payload")
-                return
+            if payload.orderId.isEmpty {
+                errorReporter.capture(
+                    operation: "thin_payment_failure_payload",
+                    error: RouterError("Payment failure payload carried no orderId"),
+                    context: ["keys": AnalyticsSanitizer.schemaKeys(Array(payloadData.keys)).joined(separator: ",")]
+                )
             }
+            // Delivered either way: the payload travels as-is in rawResponse.
             complete(.failure(message: "Payment failed", code: nil), payload: payload)
         case "payment.pending", "pending":
             let payload = GlomoPayPayload(json: payloadData)
@@ -157,12 +198,14 @@ final class GlomoPayEventRouter {
                 "termination_source": "checkout_closed",
             ])
             complete(.cancelled, termination: .userDismiss)
-        case "glomoCheckoutJourneyTerminate":
-            analytics.track(AnalyticsEventName.payViaBankCompleted, properties: [
-                "pay_via_bank_status": payloadData["status"],
-            ])
+        // No `glomoCheckoutJourneyTerminate` case. Pay-via-bank is sunset and unsupported on iOS:
+        // the event used to be tracked as Pay Via Bank Completed with no callback, no payload type
+        // and no enum member behind it, which made a dashboard show a live-looking signal for a
+        // journey no merchant is told about. If the page still emits it, it now falls through to
+        // the default branch as Unsupported Functionality Used, which is the correct outcome.
         case "lrs.has_education_steps":
-            if payloadData["value"] as? Bool == true {
+            // The page's contract is { event, hasContent }; the old `value` read never matched.
+            if EducationCarouselContract.hasContent(payloadData) == true {
                 analytics.track(AnalyticsEventName.educationStepsShown, properties: [
                     "source": payloadData["source"],
                 ])
@@ -171,32 +214,58 @@ final class GlomoPayEventRouter {
             analytics.track(AnalyticsEventName.educationStepsFailed, properties: [
                 "reason": payloadData["reason"] ?? "render_failed",
             ])
-        case "dependencies.failed_to_load":
-            let message = payloadData["message"] as? String ?? "Checkout dependencies failed to load"
-            analytics.track(AnalyticsEventName.checkoutDependenciesFailed, properties: ["error_message": message])
+        // No second `dependencies.failed_to_load` handler. The envelope-level case already tracks
+        // it; handling it here too tracked the same failure twice for one message. The page reports
+        // it under its own name and the SDK keeps it that way - it used to be re-emitted as
+        // `checkout.dependencies_failed`, an SDK-invented alias for a web event, which made an
+        // event the page owns look like one the SDK raised. No dialog is drawn over the page's own
+        // error screen and no console output is interpreted; that half was already correct.
         default:
-            break
+            // Page events the SDK does not route used to be forwarded verbatim to the host's
+            // onEvent. With that channel gone, the signal lives in analytics instead of nowhere.
+            if let eventName {
+                analytics.track(AnalyticsEventName.unsupportedFunctionalityUsed, properties: [
+                    "name": eventName,
+                    "source": "page_message",
+                ])
+            }
         }
     }
 
     @discardableResult
     private func complete(_ result: GlomoPayResult, payload: GlomoPayPayload? = nil, termination: TerminationSource? = nil) -> Bool {
         guard !terminalDelivered else { return false }
+        // Set before the callback runs, so a host that re-enters cannot produce a second result.
         terminalDelivered = true
-        switch result {
-        case .success(let payload):
-            listener?.onPaymentSuccess(payload)
-        case .failure:
-            if let payload { listener?.onPaymentFailure(payload) }
-        case .cancelled:
-            listener?.onPaymentTerminate(termination ?? .userDismiss)
+        deliverToListener { listener in
+            switch result {
+            case .success(let payload):
+                listener.onPaymentSuccess(payload)
+            case .failure:
+                if let payload { listener.onPaymentFailure(payload) }
+            case .userJourney(let journey):
+                listener.onUserJourneyCompleted(journey)
+            case .cancelled:
+                listener.onPaymentTerminate(termination ?? .userDismiss)
+            }
         }
         onComplete(result)
         return true
     }
 
-    private func emit(_ name: String, _ payload: [String: Any]) {
-        listener?.onEvent(name: name, payload: payload)
+    /// The listener is weak: if the host let it go, the result cannot be delivered. Report that
+    /// rather than dropping a payment outcome in silence.
+    private func deliverToListener(_ deliver: (GlomoPayListener) -> Void) {
+        guard let listener else {
+            analytics.track(AnalyticsEventName.listenerUnavailable, properties: ["source": "bridge"])
+            errorReporter.capture(
+                operation: "listener_unavailable",
+                error: RouterError("Listener was released before a terminal result was delivered"),
+                context: ["source": "bridge"]
+            )
+            return
+        }
+        deliver(listener)
     }
 
     private func emitError(message: String) {

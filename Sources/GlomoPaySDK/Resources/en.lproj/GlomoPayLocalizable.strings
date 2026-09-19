@@ -1,0 +1,12 @@
+/* GlomoPay checkout - user-facing strings. A host may override any key by declaring it in its
+   own GlomoPayLocalizable table. */
+"glomopay.loading_checkout" = "Loading checkout...";
+"glomopay.opening_secure_page" = "Opening secure page...";
+"glomopay.recovering_checkout" = "Recovering checkout...";
+"glomopay.checkout_title" = "Checkout";
+"glomopay.connection_error_title" = "Connection problem";
+"glomopay.connection_error_message" = "Unable to load this page. Please check your connection and try again.";
+"glomopay.retry" = "Retry";
+"glomopay.cancel" = "Cancel";
+"glomopay.close" = "Close";
+"glomopay.back" = "Back";

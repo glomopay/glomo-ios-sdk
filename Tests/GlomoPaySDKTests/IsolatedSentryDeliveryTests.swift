@@ -18,7 +18,7 @@ final class IsolatedSentryDeliveryTests: XCTestCase {
             client: IsolatedSentryClient(dsn: dsn),
             sessionID: UUID().uuidString,
             initialFlowType: "diagnostic",
-            devMode: true
+            devMode: SDKBuildFlags.internalBuild
         )
 
         reporter.addBreadcrumb(

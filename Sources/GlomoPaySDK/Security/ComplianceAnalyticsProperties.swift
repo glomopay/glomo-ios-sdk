@@ -1,6 +1,13 @@
 enum ComplianceAnalyticsProperties {
-    static func make(result: DeviceComplianceResult, devMode: Bool) -> [String: Any?] {
-        let sensitiveChecksSkipped = devMode || result.checksSkipped
+    /// The internal-build flag deliberately does not appear here.
+    ///
+    /// It used to be OR-ed into `sensitiveChecksSkipped`, so the same flag that relaxed the
+    /// jailbreak block also nulled `is_compliant`, `is_jailbroken` and `is_emulator` - the
+    /// telemetry that would have revealed it was relaxed. Only an actually skipped check nulls
+    /// them now; `dev_mode` rides on every event separately, which is how a build that shipped
+    /// with the flag enabled is detected after the fact.
+    static func make(result: DeviceComplianceResult) -> [String: Any?] {
+        let sensitiveChecksSkipped = result.checksSkipped
         return [
             "is_compliant": sensitiveChecksSkipped ? nil : result.isCompliant,
             "is_jailbroken": sensitiveChecksSkipped ? nil : result.isJailbroken,

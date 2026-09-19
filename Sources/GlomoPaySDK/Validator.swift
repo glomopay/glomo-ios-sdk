@@ -28,6 +28,20 @@ public enum Validator {
         return errors
     }
 
+    /// `URL(string:)` is a parse, not a check: it accepts `javascript:`, `data:`, `file:` and
+    /// `about:` and returns a perfectly valid URL. Every window.open URL from the page is
+    /// gated on this before it can become a navigation.
+    public static func isValidUrl(_ value: String) -> Bool {
+        guard let components = URLComponents(string: value),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = components.host,
+              !host.isEmpty,
+              components.user == nil,
+              components.password == nil else { return false }
+        return true
+    }
+
     public static func isValidPaymentPayload(_ payload: GlomoPayPayload) -> Bool {
         !payload.orderId.isEmpty && !(payload.paymentId?.isEmpty ?? true) && !(payload.signature?.isEmpty ?? true)
     }

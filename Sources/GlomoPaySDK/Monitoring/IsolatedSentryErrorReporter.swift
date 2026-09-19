@@ -110,7 +110,7 @@ enum SDKErrorReporterFactory {
             client: client,
             sessionID: sessionID,
             initialFlowType: flowType,
-            devMode: config.devMode
+            devMode: SDKBuildFlags.internalBuild
         )
     }
 }

@@ -18,7 +18,6 @@ struct ContentView: View {
                 Section("Checkout") {
                     Text("Checkout type is detected automatically from the order.")
                         .foregroundStyle(.secondary)
-                    Toggle("Developer mode", isOn: $model.devMode)
                 }
 
                 Section {

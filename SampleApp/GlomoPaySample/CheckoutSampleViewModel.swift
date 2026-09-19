@@ -7,7 +7,6 @@ import UIKit
 final class CheckoutSampleViewModel: ObservableObject, GlomoPayListener {
     @Published var publicKey = ""
     @Published var identifier = ""
-    @Published var devMode = true
     @Published var status = "Ready"
     @Published var events: [String] = []
     @Published var isStarting = false
@@ -29,8 +28,7 @@ final class CheckoutSampleViewModel: ObservableObject, GlomoPayListener {
         let config = GlomoPayConfig(
             publicKey: publicKey.trimmingCharacters(in: .whitespacesAndNewlines),
             orderId: isSubscription ? nil : trimmedIdentifier,
-            subscriptionId: isSubscription ? trimmedIdentifier : nil,
-            devMode: devMode
+            subscriptionId: isSubscription ? trimmedIdentifier : nil
         )
         let errors = GlomoPaySDK.shared.validate(config)
         guard errors.isEmpty else {
@@ -55,6 +53,7 @@ final class CheckoutSampleViewModel: ObservableObject, GlomoPayListener {
         updateOnMain { model in
             model.isStarting = false
             model.status = "SUCCESS: \(payload.orderId)"
+            model.log("onPaymentSuccess orderId=\(payload.orderId)")
         }
     }
 
@@ -62,6 +61,7 @@ final class CheckoutSampleViewModel: ObservableObject, GlomoPayListener {
         updateOnMain { model in
             model.isStarting = false
             model.status = "FAILURE: \(payload.orderId)"
+            model.log("onPaymentFailure orderId=\(payload.orderId)")
         }
     }
 
@@ -69,6 +69,20 @@ final class CheckoutSampleViewModel: ObservableObject, GlomoPayListener {
         updateOnMain { model in
             model.isStarting = false
             model.status = errors.map(\.message).joined(separator: "\n")
+            model.log("onSdkError \(errors.map(\.type.rawValue).joined(separator: ","))")
+        }
+    }
+
+    /// Required by the SDK: a bank transfer is a journey, not a payment. There is no paymentId and
+    /// no signature here, and no money has moved - reconcile it against the order server-side.
+    nonisolated func onUserJourneyCompleted(_ payload: GlomoPayUserJourneyPayload) {
+        updateOnMain { model in
+            model.isStarting = false
+            model.status = "JOURNEY: \(payload.journeyType.rawValue)"
+            model.log(
+                "onUserJourneyCompleted \(payload.journeyType.rawValue) orderId=\(payload.orderId) "
+                    + "ref=\(payload.transactionReference ?? "-") status=\(payload.status ?? "-")"
+            )
         }
     }
 
@@ -76,6 +90,7 @@ final class CheckoutSampleViewModel: ObservableObject, GlomoPayListener {
         updateOnMain { model in
             model.isStarting = false
             model.status = "CONNECTION ERROR: \(error.message)"
+            model.log("onConnectionError \(error.type.rawValue) autoClose=\(error.shouldAutoClose)")
         }
     }
 
@@ -83,17 +98,16 @@ final class CheckoutSampleViewModel: ObservableObject, GlomoPayListener {
         updateOnMain { model in
             model.isStarting = false
             model.status = "TERMINATED: \(source.rawValue)"
+            model.log("onPaymentTerminate \(source.rawValue)")
         }
     }
 
-    nonisolated func onEvent(name: String, payload: [String: Any]) {
-        updateOnMain { model in
-            model.events.append("- \(name) \(payload)")
-            if model.events.count > 100 {
-                model.events.removeFirst()
-            }
-        }
+    /// The SDK has no diagnostic event channel, so the sample logs the typed callbacks it gets.
+    func log(_ line: String) {
+        events.append("- \(line)")
+        if events.count > 100 { events.removeFirst() }
     }
+
 
     private nonisolated func updateOnMain(
         _ update: @escaping @MainActor (CheckoutSampleViewModel) -> Void

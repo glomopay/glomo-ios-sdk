@@ -5,7 +5,7 @@ final class MixpanelAnalyticsTrackerTests: XCTestCase {
     func testTrackerAddsApprovedCommonProperties() async throws {
         let transport = RecordingAnalyticsTransport()
         let tracker = MixpanelAnalyticsTracker(
-            config: GlomoPayConfig(publicKey: "test_public_key", orderId: "order_123", devMode: true),
+            config: GlomoPayConfig(publicKey: "test_public_key", orderId: "order_123"),
             sessionID: "session-uuid",
             sdkVersion: "1.0.0",
             initialFlowType: "auto",

@@ -31,6 +31,14 @@ enum AnalyticsEventName {
     static let orderTypeDetectionFailed = "Order Type Detection Failed"
     static let checkoutStarted = "Checkout Started"
     static let checkoutURLResolved = "Checkout URL Resolved"
+    static let checkoutWebViewCreated = "Checkout WebView Created"
+    static let checkoutBridgeReady = "Checkout Bridge Ready"
+    /// Carries `last_step` and a required `reason` (`render_timeout` or `watchdog`).
+    static let checkoutOpenTimeout = "Checkout Open Timeout"
+    /// The page arrived after a timeout was already reported. Not a correction, and the
+    /// difference between the two counts is not a failure rate.
+    static let checkoutOpenedAfterTimeout = "Checkout Opened After Timeout"
+    static let listenerUnavailable = "Listener Unavailable"
     static let navigationStarted = "Navigation Started"
     static let navigationFinished = "Navigation Finished"
     static let navigationURLChange = "Navigation URL Change"
@@ -45,7 +53,8 @@ enum AnalyticsEventName {
     static let paymentCancelled = "Payment Cancelled"
     static let paymentTerminated = "Payment Terminated"
     static let bankTransferSubmitted = "Bank Transfer Submitted"
-    static let payViaBankCompleted = "Pay Via Bank Completed"
+    // No payViaBankCompleted: pay-via-bank is sunset and unsupported on iOS, and an event that
+    // fires with no callback behind it made dashboards show a journey no merchant is told about.
     static let connectionError = "Connection Error"
     static let webViewHTTPError = "WebView HTTP Error"
     static let webViewError = "WebView Error"
@@ -55,9 +64,12 @@ enum AnalyticsEventName {
     static let educationStepsShown = "Education Steps Shown"
     static let educationStepsFailed = "Education Steps Failed"
     static let fileUploadRequested = "File Upload Requested"
-    // TODO: Restore this event if iOS introduces a permission-gated file picker flow.
+    // TODO: Restore these two events if iOS introduces its own file picker flow. The SDK
+    // deliberately does not implement runOpenPanelWith, so WebKit owns the picker and there is
+    // no picker path to report from. See the file-upload note in README.
     // static let filePermissionDenied = "File Permission Denied"
-    static let filePickerError = "File Picker Error"
+    // static let filePickerError = "File Picker Error"
+    static let nonHTTPNavigationAttempted = "Non HTTP Navigation Attempted"
     static let iOSDocumentRetry = "iOS Document Retry"
     static let consoleLogCaptured = "Console Log Captured"
     static let unsupportedFunctionalityUsed = "Unsupported Functionality Used"

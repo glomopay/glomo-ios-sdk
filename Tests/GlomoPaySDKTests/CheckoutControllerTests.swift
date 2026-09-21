@@ -11,6 +11,11 @@ import XCTest
 /// behaviour that does not need a live network or a real bank page.
 @MainActor
 final class CheckoutControllerTests: XCTestCase {
+    // Controller tests must not send analytics or errors to live telemetry services.
+    private let telemetryRuntime = SDKTelemetryRuntime(
+        configuration: .load(environment: [:], bundledValues: [:])
+    )
+
     private func makeController(
         orderType: String = "standard",
         autoClose: Bool = true,
@@ -24,7 +29,9 @@ final class CheckoutControllerTests: XCTestCase {
         let controller = GlomoPayCheckoutViewController(
             config: config,
             orderType: orderType,
-            listener: listener
+            listener: listener,
+            apiClient: nil,
+            telemetryRuntime: telemetryRuntime
         )
         controller.loadViewIfNeeded()
         return controller
@@ -168,7 +175,13 @@ final class CheckoutControllerTests: XCTestCase {
         XCTAssertEqual(webViews(in: controller.view).count, 2)
 
         let back = try XCTUnwrap(button(titled: GlomoPayStrings.back, in: controller.view))
-        back.sendActions(for: .touchUpInside)
+        // SwiftPM runs without UIApplicationMain, so UIControl.sendActions cannot dispatch.
+        // Invoke the button's registered target/action and verify the real wiring and handler.
+        let actions = try XCTUnwrap(back.actions(forTarget: controller, forControlEvent: .touchUpInside))
+        XCTAssertEqual(actions.count, 1)
+        for action in actions {
+            controller.perform(NSSelectorFromString(action), with: back)
+        }
 
         // Back closes the overlay unconditionally - it does not walk the bank page's history.
         XCTAssertEqual(webViews(in: controller.view).count, 1)
@@ -250,7 +263,7 @@ final class CheckoutControllerTests: XCTestCase {
 
     // MARK: - Order-type detection
 
-    func testOrderFetchTimeoutTerminatesWithoutOpeningAnyCheckout() {
+    func testOrderFetchTimeoutTerminatesWithoutOpeningAnyCheckout() async {
         let listener = RecordingCheckoutListener()
         let controller = GlomoPayCheckoutViewController(
             config: GlomoPayConfig(publicKey: "test_public_key", orderId: "order_123456"),
@@ -260,14 +273,15 @@ final class CheckoutControllerTests: XCTestCase {
                 publicKey: "test_public_key",
                 baseURL: URL(string: "https://api.example.com")!,
                 client: FailingHTTPClient(error: URLError(.timedOut))
-            )
+            ),
+            telemetryRuntime: telemetryRuntime
         )
         controller.loadViewIfNeeded()
 
         let reported = expectation(description: "connection error reported")
         listener.onConnectionErrorCalled = { reported.fulfill() }
         controller.viewDidAppear(false)
-        wait(for: [reported], timeout: 5)
+        await fulfillment(of: [reported], timeout: 5)
 
         // A timeout is connectivity, not an SDK fault - and no WebView was navigated, because the
         // order type is only knowable from a successful fetch.
@@ -277,7 +291,7 @@ final class CheckoutControllerTests: XCTestCase {
         XCTAssertNil(webViews(in: controller.view).first?.url)
     }
 
-    func testOrderFetchStatusFailureIsAnSdkErrorNotAConnectionError() {
+    func testOrderFetchStatusFailureIsAnSdkErrorNotAConnectionError() async {
         let listener = RecordingCheckoutListener()
         let controller = GlomoPayCheckoutViewController(
             config: GlomoPayConfig(publicKey: "test_public_key", orderId: "order_123456"),
@@ -287,14 +301,15 @@ final class CheckoutControllerTests: XCTestCase {
                 publicKey: "test_public_key",
                 baseURL: URL(string: "https://api.example.com")!,
                 client: StatusHTTPClient(statusCode: 500)
-            )
+            ),
+            telemetryRuntime: telemetryRuntime
         )
         controller.loadViewIfNeeded()
 
         let reported = expectation(description: "sdk error reported")
         listener.onSdkErrorCalled = { reported.fulfill() }
         controller.viewDidAppear(false)
-        wait(for: [reported], timeout: 5)
+        await fulfillment(of: [reported], timeout: 5)
 
         // The server answered, so connectivity is fine.
         XCTAssertTrue(listener.connectionErrors.isEmpty)

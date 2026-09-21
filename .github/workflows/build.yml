@@ -32,10 +32,17 @@ jobs:
             -scheme glomo-ios-sdk \
             -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
             -skipMacroValidation \
-            | xcpretty || xcodebuild test \
-            -scheme glomo-ios-sdk \
-            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
-            -skipMacroValidation
+            -resultBundlePath "$RUNNER_TEMP/spm-tests.xcresult" \
+            | tee "$RUNNER_TEMP/spm-tests.log"
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spm-test-diagnostics
+          path: |
+            ${{ runner.temp }}/spm-tests.log
+            ${{ runner.temp }}/spm-tests.xcresult
+          retention-days: 7
 
   # This job intentionally exercises the UIKit/WebKit checkout controller. Plain `swift test`
   # builds for macOS, where `canImport(UIKit)` is false and the checkout controller is compiled
@@ -57,10 +64,17 @@ jobs:
             -scheme glomo-ios-sdk \
             -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
             -skipMacroValidation \
-            | xcpretty || xcodebuild test \
-            -scheme glomo-ios-sdk \
-            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
-            -skipMacroValidation
+            -resultBundlePath "$RUNNER_TEMP/ios-tests.xcresult" \
+            | tee "$RUNNER_TEMP/ios-tests.log"
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-diagnostics
+          path: |
+            ${{ runner.temp }}/ios-tests.log
+            ${{ runner.temp }}/ios-tests.xcresult
+          retention-days: 7
 
   podspec:
     name: Podspec lint

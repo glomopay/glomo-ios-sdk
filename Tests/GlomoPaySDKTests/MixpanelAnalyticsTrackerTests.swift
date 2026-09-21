@@ -176,17 +176,23 @@ private func assertSendable<T: Sendable>(_: T.Type) {}
 
 private actor RecordingAnalyticsTransport: AnalyticsTransporting {
     private var events: [AnalyticsEvent] = []
+    private var eventReceived: XCTestExpectation?
 
     func send(_ event: AnalyticsEvent) async throws {
         events.append(event)
+        eventReceived?.fulfill()
+        eventReceived = nil
     }
 
     func nextEvent() async throws -> AnalyticsEvent {
-        for _ in 0..<100 {
-            if !events.isEmpty { return events.removeFirst() }
-            try await Task.sleep(nanoseconds: 10_000_000)
+        if events.isEmpty {
+            let received = XCTestExpectation(description: "analytics transport received event")
+            eventReceived = received
+            let result = await XCTWaiter.fulfillment(of: [received], timeout: 10)
+            eventReceived = nil
+            guard result == .completed else { throw RecordingError.timedOut }
         }
-        throw RecordingError.timedOut
+        return events.removeFirst()
     }
 }
 

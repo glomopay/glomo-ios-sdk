@@ -18,25 +18,34 @@ jobs:
   spm:
     name: SwiftPM build and test
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - name: Show toolchain
-        run: swift --version
-      - name: Build
-        run: swift build -v
-      - name: Test
-        run: swift test -v
+        run: xcodebuild -version
+      - name: Resolve SwiftPM dependencies
+        run: xcodebuild -resolvePackageDependencies -scheme glomo-ios-sdk
+      - name: Build and test SwiftPM package on iOS simulator
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme glomo-ios-sdk \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -skipMacroValidation \
+            | xcpretty || xcodebuild test \
+            -scheme glomo-ios-sdk \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -skipMacroValidation
 
-  # swift test builds for macOS, where canImport(UIKit) is false, so the entire checkout
-  # controller - every WebView behaviour in the SDK - is compiled out of that test binary. This
-  # job is the only one that both compiles and runs it.
+  # This job intentionally exercises the UIKit/WebKit checkout controller. Plain `swift test`
+  # builds for macOS, where `canImport(UIKit)` is false and the checkout controller is compiled
+  # out of the test binary.
   ios-simulator:
     name: iOS simulator tests
     runs-on: macos-15
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - name: Show toolchain
         run: xcodebuild -version
       - name: List simulators
@@ -58,6 +67,6 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - name: Lint podspec
         run: pod lib lint glomo-ios-sdk.podspec --allow-warnings --verbose

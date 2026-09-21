@@ -47,11 +47,11 @@ final class MixpanelAnalyticsTracker: AnalyticsTracking {
     }
 
     func updateFlowType(_ flowType: String) {
-        lock.withLock { self.flowType = flowType }
+        lock.glomoWithLock { self.flowType = flowType }
     }
 
     func updateCheckoutURL(_ url: URL) {
-        lock.withLock { checkoutURL = url }
+        lock.glomoWithLock { checkoutURL = url }
     }
 
     func updateNetworkSnapshotProperties(_ properties: [String: Any?]) {
@@ -61,7 +61,7 @@ final class MixpanelAnalyticsTracker: AnalyticsTracking {
     func track(_ event: String, properties: [String: Any?]) {
         errorReporter.addBreadcrumb(category: "analytics", message: event, data: ["event_name": event])
         let date = now()
-        let state = lock.withLock { (flowType, checkoutURL, networkSnapshotProperties) }
+        let state = lock.glomoWithLock { (flowType, checkoutURL, networkSnapshotProperties) }
         let analyticsOrderID = config.checkoutId
         var common = deviceProperties()
         common.merge(state.2) { _, snapshotValue in snapshotValue }
@@ -112,7 +112,7 @@ final class MixpanelAnalyticsTracker: AnalyticsTracking {
     private static let timestampLock = NSLock()
 
     private static func formattedTimestamp(_ date: Date) -> String {
-        timestampLock.withLock { timestampFormatter.string(from: date) }
+        timestampLock.glomoWithLock { timestampFormatter.string(from: date) }
     }
 
     private func cacheNetworkSnapshot(from properties: [String: Any?]) {
@@ -122,7 +122,7 @@ final class MixpanelAnalyticsTracker: AnalyticsTracking {
             output[key] = value
         }
         guard !snapshot.isEmpty else { return }
-        lock.withLock {
+        lock.glomoWithLock {
             networkSnapshotProperties.merge(snapshot) { _, new in new }
         }
     }

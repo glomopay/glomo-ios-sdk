@@ -29,11 +29,11 @@ private final class FlushRecordingErrorReporter: SDKErrorReporting, @unchecked S
     }
 
     var timeout: TimeInterval? {
-        lock.withLock { recordedTimeout }
+        lock.glomoWithLock { recordedTimeout }
     }
 
     var wasCalledOnMainThread: Bool {
-        lock.withLock { recordedMainThreadState }
+        lock.glomoWithLock { recordedMainThreadState }
     }
 
     func updateFlowType(_ flowType: String) {}
@@ -41,7 +41,7 @@ private final class FlushRecordingErrorReporter: SDKErrorReporting, @unchecked S
     func capture(operation: String, error: Error, context: [String: Any?]) {}
 
     func flush(timeout: TimeInterval) {
-        lock.withLock {
+        lock.glomoWithLock {
             recordedTimeout = timeout
             recordedMainThreadState = Thread.isMainThread
         }

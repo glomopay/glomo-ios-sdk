@@ -11,6 +11,7 @@ let sdkSwiftSettings: [SwiftSetting] = internalBuild ? [.define("GLOMO_INTERNAL_
 
 let package = Package(
     name: "glomo-ios-sdk",
+    defaultLocalization: "en",
     platforms: [
         .iOS(.v15),
         .macOS(.v10_15),
@@ -19,7 +20,7 @@ let package = Package(
         .library(name: "glomo-ios-sdk", targets: ["GlomoPaySDK"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/getsentry/sentry-cocoa.git", from: "8.58.4"),
+        .package(url: "https://github.com/getsentry/sentry-cocoa.git", from: "9.24.0"),
     ],
     targets: [
         .target(

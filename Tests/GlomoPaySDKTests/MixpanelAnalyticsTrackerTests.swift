@@ -188,7 +188,8 @@ private actor RecordingAnalyticsTransport: AnalyticsTransporting {
         if events.isEmpty {
             let received = XCTestExpectation(description: "analytics transport received event")
             eventReceived = received
-            let result = await XCTWaiter.fulfillment(of: [received], timeout: 10)
+            // A utility-priority task can be delayed while the simulator starts WebKit.
+            let result = await XCTWaiter.fulfillment(of: [received], timeout: 30)
             eventReceived = nil
             guard result == .completed else { throw RecordingError.timedOut }
         }

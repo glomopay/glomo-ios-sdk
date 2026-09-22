@@ -2,13 +2,14 @@ import XCTest
 @testable import GlomoPaySDK
 
 final class SDKErrorReporterTests: XCTestCase {
-    func testTerminalFlusherFlushesReporterOffMainThread() {
+    func testTerminalFlusherFlushesReporterOffMainThread() async {
         let expectation = expectation(description: "Reporter flushed")
         let reporter = FlushRecordingErrorReporter(expectation: expectation)
 
         SDKErrorReporterTerminalFlusher.flush(reporter)
 
-        wait(for: [expectation], timeout: 2)
+        // Allow CI to schedule the utility queue; the flush timeout stays 1.5 seconds.
+        await fulfillment(of: [expectation], timeout: 30)
         XCTAssertEqual(reporter.timeout, SDKErrorReporterTerminalFlusher.timeout)
         XCTAssertFalse(reporter.wasCalledOnMainThread)
     }

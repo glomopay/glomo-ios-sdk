@@ -280,8 +280,10 @@ final class CheckoutControllerTests: XCTestCase {
 
         let reported = expectation(description: "connection error reported")
         listener.onConnectionErrorCalled = { reported.fulfill() }
-        controller.viewDidAppear(false)
-        await fulfillment(of: [reported], timeout: 5)
+        controller.beginAppearanceTransition(true, animated: false)
+        controller.endAppearanceTransition()
+        // This bounds simulator scheduling, not the mocked HTTP request's timeout.
+        await fulfillment(of: [reported], timeout: 30)
 
         // A timeout is connectivity, not an SDK fault - and no WebView was navigated, because the
         // order type is only knowable from a successful fetch.
@@ -308,8 +310,9 @@ final class CheckoutControllerTests: XCTestCase {
 
         let reported = expectation(description: "sdk error reported")
         listener.onSdkErrorCalled = { reported.fulfill() }
-        controller.viewDidAppear(false)
-        await fulfillment(of: [reported], timeout: 5)
+        controller.beginAppearanceTransition(true, animated: false)
+        controller.endAppearanceTransition()
+        await fulfillment(of: [reported], timeout: 30)
 
         // The server answered, so connectivity is fine.
         XCTAssertTrue(listener.connectionErrors.isEmpty)

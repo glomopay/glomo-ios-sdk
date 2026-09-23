@@ -20,7 +20,7 @@ let package = Package(
         .library(name: "glomo-ios-sdk", targets: ["GlomoPaySDK"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/getsentry/sentry-cocoa.git", from: "9.24.0"),
+        .package(url: "https://github.com/getsentry/sentry-cocoa.git", exact: "9.24.0"),
     ],
     targets: [
         .target(

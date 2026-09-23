@@ -25,33 +25,24 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Boot the pinned iOS simulator
-        run: |
-          device_id=$(xcrun simctl create "Glomo CI" com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-5)
-          xcrun simctl bootstatus "$device_id" -b
-          echo "TEST_DEVICE_ID=$device_id" >> "$GITHUB_ENV"
       - name: Show toolchain
-        run: xcodebuild -version
-      - name: Resolve SwiftPM dependencies
-        run: xcodebuild -resolvePackageDependencies -scheme glomo-ios-sdk
-      - name: Build and test SwiftPM package on iOS simulator
+        run: swift --version
+      - name: Build SwiftPM package for macOS
         run: |
           set -o pipefail
-          xcodebuild test \
-            -scheme glomo-ios-sdk \
-            -destination "platform=iOS Simulator,id=$TEST_DEVICE_ID" \
-            -parallel-testing-enabled NO \
-            -skipMacroValidation \
-            -resultBundlePath "$RUNNER_TEMP/spm-tests.xcresult" \
-            | tee "$RUNNER_TEMP/spm-tests.log"
+          swift build -v | tee "$RUNNER_TEMP/spm-build.log"
+      - name: Test SwiftPM package on macOS
+        run: |
+          set -o pipefail
+          swift test -v | tee "$RUNNER_TEMP/spm-tests.log"
       - name: Upload test diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: spm-test-diagnostics
           path: |
+            ${{ runner.temp }}/spm-build.log
             ${{ runner.temp }}/spm-tests.log
-            ${{ runner.temp }}/spm-tests.xcresult
           retention-days: 7
 
   # This job intentionally exercises the UIKit/WebKit checkout controller. Plain `swift test`

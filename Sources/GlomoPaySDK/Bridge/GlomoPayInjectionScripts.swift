@@ -3,12 +3,12 @@ import Foundation
 /// JavaScript injected into WKWebView. Payment detection remains exclusively
 /// on the window.postMessage channel, matching the Flutter/Kotlin SDKs.
 public enum GlomoPayInjectionScripts {
-    public static let main = build(bridgeName: "GlomoPayBridge")
+    public static let main = build(bridgeName: "GlomoPayBridge", emitsBridgeReady: true)
 
     /// The flow script is the base bridge plus the `window.opener` stub, and it is injected at
     /// `.atDocumentStart` so the stub exists before the bank page's own scripts run: pages
     /// opened through `window.open` call `opener.postMessage()` during load.
-    public static let flow = build(bridgeName: "GlomoPayFlowBridge")
+    public static let flow = build(bridgeName: "GlomoPayFlowBridge", emitsBridgeReady: false)
         + openerStub(bridgeName: "GlomoPayFlowBridge")
 
     /// Carries payment results from bank pages that report through `window.opener`.
@@ -201,8 +201,14 @@ public enum GlomoPayInjectionScripts {
     })();
     """
 
-    private static func build(bridgeName: String) -> String {
-        """
+    private static func build(bridgeName: String, emitsBridgeReady: Bool) -> String {
+        let readySignal = emitsBridgeReady
+            ? """
+              // The main checkout's final open-funnel step. Flow WebViews must not emit this.
+              bridge(JSON.stringify({type: 'bridge.ready'}));
+              """
+            : ""
+        return """
         (function() {
           var flag = '__glomo_\(bridgeName)_Injected__';
           if (window[flag]) return;
@@ -270,8 +276,7 @@ public enum GlomoPayInjectionScripts {
               bridge(JSON.stringify({type: 'file.input', accept: target.accept || '', inputId: target.id || '', inputName: target.name || ''}));
             }
           }, true);
-          // Last: the checkout-open funnel's final step, and what stands the load timeouts down.
-          bridge(JSON.stringify({type: 'bridge.ready'}));
+          \(readySignal)
         })();
         """
     }

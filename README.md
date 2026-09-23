@@ -39,7 +39,7 @@ https://github.com/glomopay/glomo-ios-sdk.git
 The package product is named `glomo-ios-sdk`. The Swift module remains
 `GlomoPaySDK`, so merchant applications continue to use `import GlomoPaySDK`.
 
-## Current foundation
+## SDK capabilities
 
 - Swift Package Manager library targeting iOS 15+
 - Flutter-compatible configuration, identifiers, modes, URL generation, payloads, results, and validation
@@ -52,7 +52,7 @@ The package product is named `glomo-ios-sdk`. The Swift module remains
 - Direct Mixpanel REST analytics with the shared native event contract, PII filtering, and bank URL sanitization
 - Isolated Sentry error reporting for SDK/analytics failures without global `SentrySDK.start` initialization
 - Bundled privacy manifest covering analytics and SDK diagnostics
-- Shared JavaScript injection contract for the upcoming `WKWebView` bridge
+- Document-start JavaScript bridge for checkout, bank overlays, carousel availability, and payment events
 - XCTest coverage for validation, URL generation, API errors, payloads, bridge events, security policy, and iOS WebView safeguards
 
 ## Checkout flow
@@ -157,14 +157,13 @@ destroy a 3DS session mid-redirect.
 
 ### Developer flag
 
-There is no merchant-settable `devMode`. An SDK-internal build defines `GLOMO_INTERNAL_BUILD` in
-`Package.swift` (via a `GLOMO_INTERNAL_BUILD=true` environment variable at resolve time) or in the
-podspec's `pod_target_xcconfig`. Absent means false, so a typo or a missing flag both fail closed,
-and because the package is source-distributed a merchant cannot set it without editing the
-manifest. It relaxes the jailbreak/debugger block and enables verbose logging, and it rides on
-every analytics event as `dev_mode` so a build that shipped with it enabled is detectable. It does
-not gate analytics or error reporting, which are decided by Mixpanel token and Sentry DSN presence
-alone.
+There is no merchant-settable `devMode`. For an SDK-controlled SwiftPM build,
+`GLOMO_INTERNAL_BUILD=true` at package resolution defines the compile condition. The podspec keeps
+its equivalent `pod_target_xcconfig` example commented out deliberately, so a pod published to
+merchants always fails closed. The flag relaxes the jailbreak/debugger block, enables verbose
+logging, and rides on every analytics event as `dev_mode` so an internal build is detectable. It
+does not gate analytics or error reporting, which are decided by Mixpanel token and Sentry DSN
+presence alone.
 
 ### User-facing strings
 

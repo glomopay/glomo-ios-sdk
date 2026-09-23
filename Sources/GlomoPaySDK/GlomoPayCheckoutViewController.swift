@@ -2,11 +2,8 @@
 import UIKit
 import WebKit
 
-/// Native iOS host for the main GlomoPay checkout document.
-///
-/// The JavaScript message bridge is deliberately attached in the next phase;
-/// this controller owns only presentation, navigation, loading, and network
-/// error behavior so those concerns stay independently testable.
+/// Native iOS host for checkout presentation, WebView isolation, bridge routing, bank-flow
+/// overlays, education content, open-timeout diagnostics, and terminal callback delivery.
 public final class GlomoPayCheckoutViewController: UIViewController, WKNavigationDelegate, WKUIDelegate, UIAdaptivePresentationControllerDelegate {
     public let config: GlomoPayConfig
     public let requestedOrderType: String
@@ -325,7 +322,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             self.reportOpenTimeout(reason: "render_timeout", budget: budget)
             self.deliverConnectionError(ConnectionError(
                 type: .timeout,
-                message: "Checkout is taking longer than expected. You can retry or close checkout.",
+                message: GlomoPayStrings.checkoutTakingLonger,
                 failedURL: self.currentURL,
                 shouldAutoClose: false
             ))
@@ -1037,7 +1034,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         guard let overlay = flowOverlay, let flow = flowWebView else { return }
         flowErrorView?.removeFromSuperview()
         let panel = makeErrorPanel(
-            message: GlomoPayStrings.connectionErrorMessage,
+            message: GlomoPayStrings.connectionErrorMessage(for: error.type),
             retry: #selector(flowRetryTapped),
             cancel: #selector(flowBackTapped)
         )
@@ -1130,7 +1127,9 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private func showErrorView(_ error: ConnectionError) {
         errorView?.removeFromSuperview()
         let panel = makeErrorPanel(
-            message: error.message,
+            // Keep `error.message` as the host-facing diagnostic. System NSError and HTTP
+            // descriptions are not localised or useful as customer-facing checkout copy.
+            message: GlomoPayStrings.connectionErrorMessage(for: error.type),
             retry: #selector(retryTapped),
             cancel: #selector(closeTapped)
         )
@@ -1220,6 +1219,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
 
     /// Dismisses this checkout from host code. Safe to call more than once; after the checkout
     /// has already finished it does nothing.
+    @MainActor
     public func closeCheckout() {
         terminate(source: .programmatic)
     }

@@ -246,6 +246,22 @@ final class GlomoPaySDKTests: XCTestCase {
         XCTAssertEqual(listener.errors.count, 1)
         XCTAssertEqual(listener.errors.first?.type, .unknown)
     }
+
+    func testBridgeErrorWithNoListenerReportsUnavailable() {
+        let analytics = CapturingAnalyticsTracker()
+        let router = GlomoPayEventRouter(
+            listener: nil,
+            devMode: false,
+            onComplete: { _ in },
+            analytics: analytics,
+            errorReporter: NoOpSDKErrorReporter()
+        )
+
+        router.handle(envelope: [:])
+
+        XCTAssertTrue(analytics.names.contains(AnalyticsEventName.sdkError))
+        XCTAssertTrue(analytics.names.contains(AnalyticsEventName.listenerUnavailable))
+    }
 }
 
 private final class MockHTTPClient: GlomoPayHTTPClient {

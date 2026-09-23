@@ -275,7 +275,7 @@ final class GlomoPayEventRouter {
             "errors": SDKErrorAnalyticsSerializer.serialize([error]),
         ])
         errorReporter.capture(operation: "bridge_message", error: error, context: ["error_type": "unknown"])
-        listener?.onSdkError([error])
+        deliverToListener { $0.onSdkError([error]) }
     }
 
     private func dictionary(from body: Any) throws -> [String: Any] {

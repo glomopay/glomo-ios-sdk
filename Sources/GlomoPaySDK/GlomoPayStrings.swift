@@ -17,6 +17,30 @@ enum GlomoPayStrings {
             "Unable to load this page. Please check your connection and try again."
         )
     }
+    static var checkoutTakingLonger: String {
+        localized(
+            "glomopay.checkout_taking_longer",
+            "Checkout is taking longer than expected. You can retry or close checkout."
+        )
+    }
+    static func connectionErrorMessage(for type: ConnectionErrorType) -> String {
+        switch type {
+        case .noInternet:
+            return localized("glomopay.no_internet", "Please check your internet connection and try again.")
+        case .dnsFailure:
+            return localized("glomopay.dns_failure", "Unable to reach the checkout service. Please try again.")
+        case .timeout:
+            return checkoutTakingLonger
+        case .sslError:
+            return localized("glomopay.ssl_error", "A secure connection could not be established. Please try again.")
+        case .httpClientError:
+            return localized("glomopay.request_error", "The checkout request could not be completed. Please try again.")
+        case .httpServerError:
+            return localized("glomopay.service_error", "The checkout service is temporarily unavailable. Please try again.")
+        case .webResourceError, .unknown:
+            return connectionErrorMessage
+        }
+    }
     static var retry: String { localized("glomopay.retry", "Retry") }
     static var cancel: String { localized("glomopay.cancel", "Cancel") }
     static var close: String { localized("glomopay.close", "Close") }

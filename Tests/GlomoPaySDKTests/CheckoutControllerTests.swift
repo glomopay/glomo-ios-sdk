@@ -252,13 +252,19 @@ final class CheckoutControllerTests: XCTestCase {
         controller.webView(
             main,
             didFailProvisionalNavigation: nil,
-            withError: NSError(domain: "WKErrorDomain", code: 3, userInfo: nil)
+            withError: NSError(
+                domain: "WKErrorDomain",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "RAW TECHNICAL MESSAGE"]
+            )
         )
 
         XCTAssertEqual(listener.connectionErrors.count, 1)
         XCTAssertTrue(listener.terminations.isEmpty)
         XCTAssertNotNil(button(titled: GlomoPayStrings.retry, in: controller.view))
         XCTAssertNotNil(button(titled: GlomoPayStrings.cancel, in: controller.view))
+        XCTAssertTrue(labelTexts(in: controller.view).contains(GlomoPayStrings.connectionErrorMessage))
+        XCTAssertFalse(labelTexts(in: controller.view).contains("RAW TECHNICAL MESSAGE"))
     }
 
     // MARK: - Order-type detection
@@ -337,9 +343,17 @@ final class CheckoutControllerTests: XCTestCase {
         return nil
     }
 
+    private func labelTexts(in root: UIView) -> [String] {
+        var texts: [String] = []
+        if let label = root as? UILabel, let text = label.text { texts.append(text) }
+        for subview in root.subviews { texts += labelTexts(in: subview) }
+        return texts
+    }
+
     func testOpenFunnelOnlyAdvancesAndTimesOutOncePerAttempt() {
         var funnel = CheckoutOpenFunnel()
 
+        XCTAssertTrue(funnel.advance(.webViewCreated))
         XCTAssertTrue(funnel.advance(.urlResolved))
         XCTAssertTrue(funnel.advance(.navigationFinished))
         // A redirect cannot rewind the funnel.

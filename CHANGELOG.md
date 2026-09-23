@@ -92,9 +92,11 @@ All notable changes to the GlomoPay iOS SDK are documented here.
 - `autoCloseOnConnectionError` moved to `GlomoPayConfig`. It was a property on the checkout view
   controller, which `startCheckout` constructs internally and never exposes, so no merchant
   integrating from the README could reach it.
-- Replaced merchant-settable `devMode` with the compile-time `GLOMO_INTERNAL_BUILD` flag defined in
-  `Package.swift` and the podspec. `devMode: true` with a live key used to skip the jailbreak and
-  debugger block entirely, and the sample app shipped it enabled by default.
+- Replaced merchant-settable `devMode` with the compile-time `GLOMO_INTERNAL_BUILD` flag resolved
+  by `Package.swift` for SDK-controlled internal builds. The podspec deliberately leaves its
+  equivalent compile condition commented out so merchant releases fail closed. `devMode: true`
+  with a live key used to skip the jailbreak and debugger block entirely, and the sample app
+  shipped it enabled by default.
   `GlomoPayLogger.devMode` was a public `static var` any merchant could set process-wide while the
   controller also assigned it from the config; it is now internal and compile-time only. Analytics
   still reports `dev_mode`, and telemetry is still gated on token/DSN presence alone.

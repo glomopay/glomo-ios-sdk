@@ -24,17 +24,23 @@ enum CheckoutOpenStep: Int, CaseIterable {
 /// Why the checkout never opened, for the one incident class that is otherwise undiagnosable:
 /// the user sat on a spinner and nothing was reported.
 struct CheckoutOpenFunnel {
-    private(set) var lastStep: CheckoutOpenStep = .webViewCreated
+    private var reachedStep: CheckoutOpenStep? = nil
     private var timeoutReported = false
+
+    /// The first step is the reporting default before any event has fired. Keeping the actual
+    /// reached state optional lets `.webViewCreated` advance a fresh funnel and emit its event.
+    var lastStep: CheckoutOpenStep { reachedStep ?? .webViewCreated }
 
     /// Monotonic: a redirect or a re-navigation cannot move the funnel backwards.
     mutating func advance(_ step: CheckoutOpenStep) -> Bool {
-        guard step.rawValue > lastStep.rawValue else { return false }
-        lastStep = step
+        if let reachedStep {
+            guard step.rawValue > reachedStep.rawValue else { return false }
+        }
+        reachedStep = step
         return true
     }
 
-    var didOpen: Bool { lastStep == .bridgeReady }
+    var didOpen: Bool { reachedStep == .bridgeReady }
 
     /// The step reached when the budget ran out, once per attempt. Nil when the checkout has
     /// already opened or a timeout was already reported.

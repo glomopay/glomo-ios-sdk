@@ -61,16 +61,15 @@ network monitoring occurs.
 
 ## Isolated Sentry client
 
-The SDK transitively depends on Sentry Cocoa `>= 8.58.4, < 9.0.0` for SwiftPM and on
-`Sentry/Core ~> 8.58` for CocoaPods. This allows the SDK to coexist with merchant applications
-using a compatible Sentry 8.x release while excluding Sentry 9 breaking changes. It creates a
+The SDK pins Sentry Cocoa `9.24.0` for both SwiftPM and CocoaPods so the two supported integration
+channels compile and run against the same dependency API. It creates a
 private `SentryClient` and does not invoke `SentrySDK.start`, mutate
 the global scope, or reuse a merchant-owned client. Session Replay, automatic sessions,
 performance tracing, network tracking, and swizzling are disabled. Only explicitly captured
 SDK and analytics-delivery failures are submitted with sanitized, allow-listed context.
 
-Merchants already using an incompatible Sentry major version must align their dependency
-resolution with Sentry Cocoa 8.x before integrating this SDK.
+Merchants already using an incompatible Sentry version must align their dependency resolution
+with Sentry Cocoa `9.24.0` before integrating this SDK.
 
 ### Manual Sentry delivery verification
 

@@ -245,6 +245,8 @@ final class ContractCoverageTests: XCTestCase {
         XCTAssertTrue(GlomoPayInjectionScripts.flow.contains("GlomoPayFlowBridge"))
         XCTAssertTrue(GlomoPayInjectionScripts.flow.contains("__glomoBridge__"))
         XCTAssertFalse(GlomoPayInjectionScripts.main.contains("window.opener ="))
+        XCTAssertTrue(GlomoPayInjectionScripts.main.contains("bridge.ready"))
+        XCTAssertFalse(GlomoPayInjectionScripts.flow.contains("bridge.ready"))
 
         XCTAssertTrue(GlomoPayInjectionScripts.carousel().contains("lrs.has_education_steps"))
         XCTAssertTrue(GlomoPayInjectionScripts.carousel().contains("hasContent"))

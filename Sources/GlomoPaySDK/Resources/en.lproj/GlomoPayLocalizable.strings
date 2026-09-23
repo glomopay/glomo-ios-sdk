@@ -6,6 +6,12 @@
 "glomopay.checkout_title" = "Checkout";
 "glomopay.connection_error_title" = "Connection problem";
 "glomopay.connection_error_message" = "Unable to load this page. Please check your connection and try again.";
+"glomopay.checkout_taking_longer" = "Checkout is taking longer than expected. You can retry or close checkout.";
+"glomopay.no_internet" = "Please check your internet connection and try again.";
+"glomopay.dns_failure" = "Unable to reach the checkout service. Please try again.";
+"glomopay.ssl_error" = "A secure connection could not be established. Please try again.";
+"glomopay.request_error" = "The checkout request could not be completed. Please try again.";
+"glomopay.service_error" = "The checkout service is temporarily unavailable. Please try again.";
 "glomopay.retry" = "Retry";
 "glomopay.cancel" = "Cancel";
 "glomopay.close" = "Close";

@@ -54,6 +54,7 @@ final class AnalyticsEventRoutingTests: XCTestCase {
         XCTAssertEqual(analytics.events.map(\.name), [
             AnalyticsEventName.invalidMessageReceived,
             AnalyticsEventName.sdkError,
+            AnalyticsEventName.listenerUnavailable,
         ])
         let invalidMessage = try XCTUnwrap(analytics.events.first)
         XCTAssertFalse(invalidMessage.properties.keys.contains("data"))

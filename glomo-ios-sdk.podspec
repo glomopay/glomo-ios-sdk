@@ -19,5 +19,17 @@ Pod::Spec.new do |spec|
   spec.ios.deployment_target = "15.0"
   spec.swift_version = "5.9"
   spec.source_files = "Sources/GlomoPaySDK/**/*.swift"
+  spec.resource_bundles = {
+    "GlomoPaySDKPrivacy" => ["Sources/GlomoPaySDK/Resources/PrivacyInfo.xcprivacy"],
+    "GlomoPaySDKConfiguration" => ["Sources/GlomoPaySDK/Resources/GlomoPayTelemetryConfiguration.plist"],
+    "GlomoPaySDKResources" => ["Sources/GlomoPaySDK/Resources/en.lproj/GlomoPayLocalizable.strings"]
+  }
+  # Internal SDK builds only, and never in a pod published to merchants. Absent means false, so
+  # leaving this commented out fails closed. It relaxes the jailbroken/debugger device block.
+  # spec.pod_target_xcconfig = {
+  #   "SWIFT_ACTIVE_COMPILATION_CONDITIONS" => "$(inherited) GLOMO_INTERNAL_BUILD"
+  # }
+
   spec.frameworks = "Foundation", "UIKit", "WebKit"
+  spec.dependency "Sentry/Core", "= 9.19.1"
 end

@@ -14,25 +14,80 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
+# Keep the compiler and simulator runtime paired; OS=latest can select a newer runtime.
+env:
+  DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+
 jobs:
   spm:
     name: SwiftPM build and test
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - name: Show toolchain
         run: swift --version
-      - name: Build
-        run: swift build -v
-      - name: Test
-        run: swift test -v
+      - name: Build SwiftPM package for macOS
+        run: |
+          set -o pipefail
+          swift build -v | tee "$RUNNER_TEMP/spm-build.log"
+      - name: Test SwiftPM package on macOS
+        run: |
+          set -o pipefail
+          swift test -v | tee "$RUNNER_TEMP/spm-tests.log"
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spm-test-diagnostics
+          path: |
+            ${{ runner.temp }}/spm-build.log
+            ${{ runner.temp }}/spm-tests.log
+          retention-days: 7
+
+  # This job intentionally exercises the UIKit/WebKit checkout controller. Plain `swift test`
+  # builds for macOS, where `canImport(UIKit)` is false and the checkout controller is compiled
+  # out of the test binary.
+  ios-simulator:
+    name: iOS simulator tests
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Boot the pinned iOS simulator
+        run: |
+          device_id=$(xcrun simctl create "Glomo CI" com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-5)
+          xcrun simctl bootstatus "$device_id" -b
+          echo "TEST_DEVICE_ID=$device_id" >> "$GITHUB_ENV"
+      - name: Show toolchain
+        run: xcodebuild -version
+      - name: List simulators
+        run: xcrun simctl list devices available
+      - name: Test on iOS destination
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme glomo-ios-sdk \
+            -destination "platform=iOS Simulator,id=$TEST_DEVICE_ID" \
+            -parallel-testing-enabled NO \
+            -skipMacroValidation \
+            -resultBundlePath "$RUNNER_TEMP/ios-tests.xcresult" \
+            | tee "$RUNNER_TEMP/ios-tests.log"
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-diagnostics
+          path: |
+            ${{ runner.temp }}/ios-tests.log
+            ${{ runner.temp }}/ios-tests.xcresult
+          retention-days: 7
 
   podspec:
     name: Podspec lint
     runs-on: macos-15
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - name: Lint podspec
         run: pod lib lint glomo-ios-sdk.podspec --allow-warnings --verbose

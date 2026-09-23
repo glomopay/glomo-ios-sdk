@@ -1,0 +1,204 @@
+import Foundation
+
+struct AnalyticsEvent: Sendable {
+    let name: String
+    let properties: [String: AnalyticsValue]
+
+    var jsonProperties: [String: Any] {
+        properties.mapValues(\.jsonObject)
+    }
+}
+
+protocol AnalyticsTransporting: Sendable {
+    func send(_ event: AnalyticsEvent) async throws
+}
+
+final class MixpanelAnalyticsTracker: AnalyticsTracking {
+    private let config: GlomoPayConfig
+    private let sessionID: String
+    private let sdkVersion: String
+    private let transport: AnalyticsTransporting
+    private let errorReporter: SDKErrorReporting
+    private let deviceProperties: () -> [String: Any?]
+    private let now: () -> Date
+    private let lock = NSLock()
+    private var flowType: String
+    private var checkoutURL: URL?
+    private var networkSnapshotProperties: [String: Any?] = [:]
+
+    init(
+        config: GlomoPayConfig,
+        sessionID: String,
+        sdkVersion: String,
+        initialFlowType: String,
+        transport: AnalyticsTransporting,
+        errorReporter: SDKErrorReporting,
+        deviceProperties: @escaping () -> [String: Any?],
+        now: @escaping () -> Date = Date.init
+    ) {
+        self.config = config
+        self.sessionID = sessionID
+        self.sdkVersion = sdkVersion
+        self.flowType = initialFlowType
+        self.transport = transport
+        self.errorReporter = errorReporter
+        self.deviceProperties = deviceProperties
+        self.now = now
+    }
+
+    func updateFlowType(_ flowType: String) {
+        lock.glomoWithLock { self.flowType = flowType }
+    }
+
+    func updateCheckoutURL(_ url: URL) {
+        lock.glomoWithLock { checkoutURL = url }
+    }
+
+    func updateNetworkSnapshotProperties(_ properties: [String: Any?]) {
+        cacheNetworkSnapshot(from: properties)
+    }
+
+    func track(_ event: String, properties: [String: Any?]) {
+        errorReporter.addBreadcrumb(category: "analytics", message: event, data: ["event_name": event])
+        let date = now()
+        let state = lock.glomoWithLock { (flowType, checkoutURL, networkSnapshotProperties) }
+        let analyticsOrderID = config.checkoutId
+        var common = deviceProperties()
+        common.merge(state.2) { _, snapshotValue in snapshotValue }
+        common.merge([
+            "sdk_version": sdkVersion,
+            "sdk_source": "glomo-ios-sdk",
+            "platform": "ios",
+            "surface": "ios-sdk",
+            "flow_type": state.0,
+            "order_id": analyticsOrderID,
+            "subscription_id": config.subscriptionId,
+            "public_key": config.publicKey,
+            "checkout_url": state.1?.absoluteString,
+            "dev_mode": SDKBuildFlags.internalBuild,
+            "mock_mode": ConfigManager.isTestOrMock(config.publicKey),
+            "time": Int64(date.timeIntervalSince1970 * 1_000),
+            "timestamp": Self.formattedTimestamp(date),
+            "session_id": sessionID,
+            "distinct_id": analyticsOrderID,
+        ]) { _, new in new }
+        common.merge(properties) { _, new in new }
+        cacheNetworkSnapshot(from: properties)
+        let sanitizedProperties = AnalyticsSanitizer.properties(common)
+        let analyticsEvent = AnalyticsEvent(
+            name: event,
+            properties: AnalyticsValue.properties(from: sanitizedProperties)
+        )
+        Task.detached(priority: .utility) { [transport, errorReporter] in
+            do {
+                try await transport.send(analyticsEvent)
+            } catch {
+                GlomoPayLogger.error("Analytics event delivery failed: \(event)", error: error)
+                errorReporter.capture(
+                    operation: "mixpanel_delivery",
+                    error: error,
+                    context: ["event_name": event]
+                )
+            }
+        }
+    }
+
+    private static let timestampFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        formatter.timeZone = TimeZone(identifier: "Asia/Kolkata")
+        return formatter
+    }()
+    private static let timestampLock = NSLock()
+
+    private static func formattedTimestamp(_ date: Date) -> String {
+        timestampLock.glomoWithLock { timestampFormatter.string(from: date) }
+    }
+
+    private func cacheNetworkSnapshot(from properties: [String: Any?]) {
+        let snapshotKeys = ["$wifi_enabled", "$cellular_enabled"]
+        let snapshot = snapshotKeys.reduce(into: [String: Any?]()) { output, key in
+            guard let value = properties[key], value != nil else { return }
+            output[key] = value
+        }
+        guard !snapshot.isEmpty else { return }
+        lock.glomoWithLock {
+            networkSnapshotProperties.merge(snapshot) { _, new in new }
+        }
+    }
+}
+
+final class MixpanelHTTPTransport: AnalyticsTransporting, @unchecked Sendable {
+    static let endpoint = URL(string: "https://api.mixpanel.com/track?ip=1")!
+    private let token: String
+    private let endpoint: URL
+    private let session: URLSession
+
+    init(token: String, endpoint: URL = MixpanelHTTPTransport.endpoint, session: URLSession? = nil) {
+        self.token = token
+        self.endpoint = endpoint
+        if let session {
+            self.session = session
+        } else {
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.timeoutIntervalForRequest = 10
+            configuration.timeoutIntervalForResource = 10
+            configuration.httpCookieStorage = nil
+            self.session = URLSession(configuration: configuration)
+        }
+    }
+
+    deinit {
+        session.invalidateAndCancel()
+    }
+
+    func send(_ event: AnalyticsEvent) async throws {
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 10
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/plain", forHTTPHeaderField: "Accept")
+        var properties = event.jsonProperties
+        properties["token"] = token
+        request.httpBody = try JSONSerialization.data(withJSONObject: [[
+            "event": event.name,
+            "properties": properties,
+        ]])
+        let (data, response) = try await session.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+        let body = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (200..<300).contains(status), body == "1" else {
+            throw AnalyticsDeliveryError.rejected(statusCode: status)
+        }
+    }
+}
+
+enum AnalyticsDeliveryError: Error {
+    case rejected(statusCode: Int)
+}
+
+enum AnalyticsFactory {
+    static func create(
+        config: GlomoPayConfig,
+        sessionID: String,
+        flowType: String,
+        errorReporter: SDKErrorReporting,
+        runtime: SDKTelemetryRuntime = .shared
+    ) -> AnalyticsTracking {
+        guard let transport = runtime.mixpanelTransport else { return NoOpAnalyticsTracker() }
+        #if canImport(UIKit)
+        let properties = { IOSAnalyticsProperties.collect() }
+        #else
+        let properties = { [String: Any?]() }
+        #endif
+        return MixpanelAnalyticsTracker(
+            config: config,
+            sessionID: sessionID,
+            sdkVersion: GlomoPaySDKBuild.version,
+            initialFlowType: flowType,
+            transport: transport,
+            errorReporter: errorReporter,
+            deviceProperties: properties
+        )
+    }
+}

@@ -23,11 +23,15 @@ public enum ConfigManager {
         return components.url
     }
 
+    /// `product` and `surface` let the hosted page tell which SDK and platform it is serving,
+    /// matching the parameters Flutter v2.0.0 added.
     public static func getCarouselURL(_ config: GlomoPayConfig) -> URL? {
         var components = URLComponents(string: carouselBaseURL)
         components?.queryItems = [
             URLQueryItem(name: "orderId", value: config.orderId ?? ""),
             URLQueryItem(name: "publicKey", value: config.publicKey),
+            URLQueryItem(name: "product", value: "checkout-ios-sdk"),
+            URLQueryItem(name: "surface", value: "ios"),
         ]
         return components?.url
     }

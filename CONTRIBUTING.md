@@ -20,51 +20,18 @@ their page. Implementing SCA natively is not. A native card form would feel like
 UX improvement and would be a compliance incident. If a requirement seems to need
 one, stop and raise it.
 
-### Dependencies — keep them few, get additions reviewed
+### HARD RULE — no third-party dependencies
 
-Anything declared in `GlomoPaySDK.podspec` becomes a **transitive pod in the
-merchant's Podfile**, where it can collide with their own version of the same
-library. CocoaPods has no isolation mechanism for that, and SwiftPM resolution has
-the same problem by a different route. So the bar is higher here than in an app and
-the default is to use the platform.
+The SDK depends on Foundation, UIKit, and WebKit only. Do not add third-party
+networking, JSON, analytics, crash-reporting, or telemetry SDKs.
 
-It is **not** a ban. Hand-rolling a well-solved problem — especially a
-security-sensitive one — wastes time and usually produces something worse. Reach for
-a library when it genuinely earns its place.
+Why: anything declared in `glomo-ios-sdk.podspec` becomes a **transitive pod in the
+merchant's Podfile**, where it collides with the merchant's own version. CocoaPods
+has no isolation mechanism for this.
 
-**No discussion needed:** Apple's own frameworks and the Swift standard library.
-This SDK currently uses Foundation, UIKit and WebKit with a `URLSession`-based API
-client, and has zero pod dependencies.
-
-**Propose before you build:** anything else. Raise it in the PR description, or in an
-issue if it's large, with a short case for why. A CODEOWNER approving the PR is what
-makes it accepted — so don't land a big piece of work that depends on a dependency
-nobody has agreed to yet.
-
-What reviewers will weigh:
-
-- Does the platform already do this acceptably?
-- Is the problem genuinely fiddly or security-sensitive — jailbreak/tamper detection,
-  cryptography, parsing untrusted input? Those favour a maintained library over our
-  own code.
-- Maintenance health: recent releases, responsive to CVEs, more than one contributor.
-- **License compatibility.** Must be redistributable under Apache-2.0 into
-  closed-source merchant apps. Anything copyleft (GPL / LGPL / AGPL) is a no.
-- Binary size and, if it ships as a static framework, symbol-collision risk.
-- Collision likelihood: how commonly do host apps already depend on this, and at what
-  versions?
-- Pin an exact version in the podspec and `Package.swift`, and keep the two in sync.
-
-**Still a hard no, regardless of review:**
-
-- Anything that collects data or phones home — analytics, crash reporting,
-  attribution, advertising. Those make us a data processor inside someone else's app,
-  and they are the category most likely to collide with what the merchant already
-  runs. The React Native SDK deliberately calls Segment's REST API rather than
-  bundling the native SDK, precisely to avoid "conflicts with merchant's own Segment
-  implementation" — that reasoning still holds.
-- Anything that touches card data, tokenization, or native 3DS. See the card-handling
-  rule above.
+This SDK currently has zero pod dependencies and a `URLSession`-based API client.
+Keep it that way. If you believe a dependency is genuinely unavoidable, open a
+discussion before writing code. The answer is usually no.
 
 ### HARD RULE — no customer data in this repository
 
@@ -80,8 +47,10 @@ Use synthetic fixtures and sandbox credentials. Push protection and a gitleaks
 scan run on every push, but they are a backstop, not permission to be careless.
 
 The SDK accepts the merchant's **publishable key**, which is publishable by
-design and is not a secret. Everything else is. The SDK does not embed an
-analytics key; do not add one.
+design and is not a secret. Release-approved Mixpanel project tokens and Sentry
+DSNs are also client-side identifiers and are generated only into the scoped SDK
+telemetry resource. Never add Sentry auth tokens, symbol-upload credentials, or
+unapproved analytics credentials.
 
 ### HARD RULE — releases and `pod trunk push` are internal-only
 

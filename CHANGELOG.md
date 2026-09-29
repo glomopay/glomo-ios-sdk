@@ -6,6 +6,8 @@ All notable changes to the GlomoPay iOS SDK are documented here.
 
 ### Breaking
 
+- Minimum supported iOS is now 16.0 and distribution is Swift Package Manager only. CocoaPods
+  metadata and CI are removed.
 - `GlomoPayListener.onUserJourneyCompleted(_:)` is a new **required** callback with no
   protocol-extension default, so every integration must add it. Required on purpose, and
   deliberately breaking the pattern the extension's other default sets: the SDK cannot tell which
@@ -93,8 +95,7 @@ All notable changes to the GlomoPay iOS SDK are documented here.
   controller, which `startCheckout` constructs internally and never exposes, so no merchant
   integrating from the README could reach it.
 - Replaced merchant-settable `devMode` with the compile-time `GLOMO_INTERNAL_BUILD` flag resolved
-  by `Package.swift` for SDK-controlled internal builds. The podspec deliberately leaves its
-  equivalent compile condition commented out so merchant releases fail closed. `devMode: true`
+  by `Package.swift` for SDK-controlled internal builds. `devMode: true`
   with a live key used to skip the jailbreak and debugger block entirely, and the sample app
   shipped it enabled by default.
   `GlomoPayLogger.devMode` was a public `static var` any merchant could set process-wide while the
@@ -131,8 +132,9 @@ All notable changes to the GlomoPay iOS SDK are documented here.
   and `Sentry/Core = 9.19.1` in the podspec). SwiftPM resolves one version per package for the
   whole app, so any merchant on a different Sentry version could not install this SDK at all.
   SDK error reporting now sends Sentry envelopes over `URLSession` with the same message, tags,
-  extras, breadcrumbs, allowlist and sanitisation. No public API change, and the macOS floor is
-  unaffected. Sentry issue grouping may change for new events, which no longer carry a raw
+  extras, breadcrumbs, allowlist and sanitisation. No public API change. The Sentry dependency
+  is gone; the macOS 12 floor, raised on this release line to match Sentry 9.29+, stays, since
+  macOS only hosts `swift test`. Sentry issue grouping may change for new events, which no longer carry a raw
   capture-site stack trace (unsymbolicated without the merchant's dSYMs) or an offline retry
   spool. Events now identify as `glomo-ios-sdk/<SDK version>` (`sdk.name`, `sentry_client`,
   `User-Agent`) instead of `sentry.cocoa/9.19.1`, matching Android's `glomo-android-sdk`, so

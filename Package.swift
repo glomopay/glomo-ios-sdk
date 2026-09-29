@@ -13,8 +13,9 @@ let package = Package(
     name: "glomo-ios-sdk",
     defaultLocalization: "en",
     platforms: [
-        .iOS(.v15),
-        .macOS(.v10_15),
+        .iOS(.v16),
+        // macOS exists only so `swift test` can run on a Mac host.
+        .macOS(.v12),
     ],
     products: [
         .library(name: "glomo-ios-sdk", targets: ["GlomoPaySDK"]),

@@ -4,8 +4,8 @@
 
 The SDK reads its Mixpanel project token and Sentry DSN from the SDK-owned
 `GlomoPayTelemetryConfiguration.plist` resource. Merchant applications do not configure
-these values in their `Info.plist`, build settings, or CI. The resource is packaged by both
-SwiftPM and CocoaPods.
+these values in their `Info.plist`, build settings, or CI. The resource is packaged by Swift
+Package Manager.
 
 Release maintainers generate the resource with `scripts/generate-telemetry-config.sh` using
 shell environment variables before creating the release tag. Local SDK development can
@@ -69,8 +69,8 @@ context is sent; events carry no user fields (no id, email, username or name) an
 
 The SDK sends no IP address and sets `sdk.settings.infer_ip: never`. Sentry derives approximate
 location (country, region, city) at ingest and does not store the device IP. The setting is
-required: left unset, Sentry treats the Cocoa platform as `auto` and stores the connection IP. The privacy manifest declares coarse
-location for analytics and app functionality.
+required: left unset, Sentry treats the Cocoa platform as `auto` and stores the connection IP.
+The privacy manifest declares coarse location for analytics and app functionality.
 
 Each event is tagged `order_id` with the checkout's order id (or subscription id), the same value
 analytics sends, so it can be joined to backend logs. When events are discarded (rate limited,

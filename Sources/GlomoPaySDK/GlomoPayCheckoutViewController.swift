@@ -109,10 +109,8 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         )
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .pageSheet
-        if #available(iOS 15.0, *) {
-            sheetPresentationController?.prefersGrabberVisible = true
-            sheetPresentationController?.prefersScrollingExpandsWhenScrolledToEdge = false
-        }
+        sheetPresentationController?.prefersGrabberVisible = true
+        sheetPresentationController?.prefersScrollingExpandsWhenScrolledToEdge = false
     }
 
     @available(*, unavailable)
@@ -588,12 +586,14 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             ])
             return
         }
-        loadingView.isHidden = true
-        progressView.isHidden = true
         advanceOpenStep(.navigationFinished)
         analytics.track(AnalyticsEventName.navigationFinished, properties: [
             "url": AnalyticsSanitizer.navigationURL(webView.url),
         ])
+        webView.evaluateJavaScript(
+            "window.__glomoSendBridgeReadyAfterNativeLoad__ && window.__glomoSendBridgeReadyAfterNativeLoad__();",
+            completionHandler: nil
+        )
     }
 
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -968,7 +968,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     // That delegate method is @available(iOS 18.4, *), and WKUIDelegate's contract is that when
     // it is not implemented "the web view will match the file upload behavior of Safari". So
     // implementing it produced two different upload experiences across the live fleet: on
-    // 15.0-18.3 WebKit's own sheet offered Camera, Photo Library and Files, while on 18.4+ the
+    // 16.0-18.3 WebKit's own sheet offered Camera, Photo Library and Files, while on 18.4+ the
     // SDK replaced that sheet with a UIDocumentPickerViewController - removing capture options
     // the platform provided for free, on a KYC field where photographing a document is the
     // common case. WebKit's sheet is closer to the intended behaviour than a document picker is,
@@ -1034,7 +1034,9 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         guard let overlay = flowOverlay, let flow = flowWebView else { return }
         flowErrorView?.removeFromSuperview()
         let panel = makeErrorPanel(
-            message: GlomoPayStrings.connectionErrorMessage(for: error.type),
+            message: error.type == .timeout
+                ? GlomoPayStrings.securePageTakingLonger
+                : GlomoPayStrings.connectionErrorMessage(for: error.type),
             retry: #selector(flowRetryTapped),
             cancel: #selector(flowBackTapped)
         )

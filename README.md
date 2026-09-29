@@ -4,30 +4,6 @@ Native Swift implementation of the GlomoPay checkout SDK. The public contract is
 
 Current release: `0.0.1`
 
-## Installation with CocoaPods
-
-Add the GlomoPay pod to the application `Podfile`:
-
-```ruby
-platform :ios, '15.0'
-
-target 'YourApp' do
-  pod 'glomo-ios-sdk', '0.0.1'
-end
-```
-
-Then install the dependency:
-
-```bash
-pod install
-```
-
-Open the generated `.xcworkspace` file and import the SDK:
-
-```swift
-import GlomoPaySDK
-```
-
 ## Installation with Swift Package Manager
 
 Add the Git repository URL in Xcode and select the `0.0.1` release tag:
@@ -38,10 +14,12 @@ https://github.com/glomopay/glomo-ios-sdk.git
 
 The package product is named `glomo-ios-sdk`. The Swift module remains
 `GlomoPaySDK`, so merchant applications continue to use `import GlomoPaySDK`.
+The SDK is distributed through Swift Package Manager only and supports iOS 16.0
+and later.
 
 ## SDK capabilities
 
-- Swift Package Manager library targeting iOS 15+
+- Swift Package Manager library targeting iOS 16+
 - Flutter-compatible configuration, identifiers, modes, URL generation, payloads, results, and validation
 - `URLSession` order API client with Bearer authentication and JSON parsing
 - Injectable HTTP client for deterministic API tests without live network calls
@@ -158,12 +136,10 @@ destroy a 3DS session mid-redirect.
 ### Developer flag
 
 There is no merchant-settable `devMode`. For an SDK-controlled SwiftPM build,
-`GLOMO_INTERNAL_BUILD=true` at package resolution defines the compile condition. The podspec keeps
-its equivalent `pod_target_xcconfig` example commented out deliberately, so a pod published to
-merchants always fails closed. The flag relaxes the jailbreak/debugger block, enables verbose
-logging, and rides on every analytics event as `dev_mode` so an internal build is detectable. It
-does not gate analytics or error reporting, which are decided by Mixpanel token and Sentry DSN
-presence alone.
+`GLOMO_INTERNAL_BUILD=true` at package resolution defines the compile condition. The flag
+relaxes the jailbreak/debugger block, enables verbose logging, and rides on every analytics event
+as `dev_mode` so an internal build is detectable. It does not gate analytics or error reporting,
+which are decided by Mixpanel token and Sentry DSN presence alone.
 
 ### User-facing strings
 
@@ -180,13 +156,21 @@ supported OS version gets. Implementing it produced a document picker on 18.4+ t
 capture options the platform provided for free, on KYC fields where photographing a document is
 the common case.
 
+Because WebKit presents Camera and Photo Library from the merchant application's process, hosts
+must include these usage descriptions in their app `Info.plist`:
+
+```xml
+<key>NSCameraUsageDescription</key>
+<string>Camera access is used to capture documents during checkout verification.</string>
+<key>NSPhotoLibraryUsageDescription</key>
+<string>Photo Library access is used to upload documents during checkout verification.</string>
+```
+
 The cost of this position is recorded so it is not rediscovered as a bug: there is no picker
 telemetry (the page's own file-input click still reports `File Upload Requested` with its accept
-types) and no control over accept-type behaviour, which matches the direction anyway - `accept`
-selects which picker opens and never restricts what may be chosen, because the bank re-validates
-every upload. Revisiting this means the full picker: an action sheet with camera / photo library
-/ files, `PHPickerViewController`, the camera permission and refusal callback, and the capture
-caps that keep uploads under the bank's limit.
+types), no control over accept-type behaviour, and no SDK-side image downscale on iOS. Typical
+iPhone captures are expected to stay under the bank's 10 MB upload limit. If production uploads
+start failing on file size, the fix is a downscale on the upload path, not a replacement picker.
 
 ## Analytics and diagnostics configuration
 
@@ -213,7 +197,7 @@ See the [sample app guide](SampleApp/README.md) for run and optional analytics c
 
 ## Release versioning
 
-Keep the same version in `glomo-ios-sdk.podspec`, `CHANGELOG.md`, and the Git release tag. For version `0.0.1`:
+Keep the same version in `CHANGELOG.md` and the Git release tag. For version `0.0.1`:
 
 Generate the SDK-owned telemetry resource from the release environment before creating the
 tag. The script also accepts `MIXPANEL_TOKEN` and `SENTRY_DSN` aliases:
@@ -225,9 +209,9 @@ GLOMOPAY_SENTRY_DSN="$SENTRY_DSN" \
 ```
 
 Confirm that `Sources/GlomoPaySDK/Resources/GlomoPayTelemetryConfiguration.plist` contains
-the release values. Because SPM and CocoaPods distribute this repository's tagged source,
-the generated resource must be included in the release tag. Never place a Sentry auth token
-or symbol-upload credential in this file.
+the release values. Because Swift Package Manager distributes this repository's tagged source,
+the generated resource must be included in the release tag. Never place a Sentry auth token or
+symbol-upload credential in this file.
 
 ```bash
 git tag 0.0.1

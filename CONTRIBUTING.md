@@ -20,18 +20,12 @@ their page. Implementing SCA natively is not. A native card form would feel like
 UX improvement and would be a compliance incident. If a requirement seems to need
 one, stop and raise it.
 
-### HARD RULE — no third-party dependencies
+### HARD RULE — third-party dependencies need product approval
 
-The SDK depends on Foundation, UIKit, and WebKit only. Do not add third-party
-networking, JSON, analytics, crash-reporting, or telemetry SDKs.
-
-Why: anything declared in `glomo-ios-sdk.podspec` becomes a **transitive pod in the
-merchant's Podfile**, where it collides with the merchant's own version. CocoaPods
-has no isolation mechanism for this.
-
-This SDK currently has zero pod dependencies and a `URLSession`-based API client.
-Keep it that way. If you believe a dependency is genuinely unavoidable, open a
-discussion before writing code. The answer is usually no.
+The SDK has no third-party package dependencies; error reporting speaks Sentry's
+envelope protocol over `URLSession` instead of embedding a Sentry SDK. Do not add
+third-party networking, JSON, analytics, crash-reporting, or telemetry SDKs without
+an explicit GlomoPay design decision.
 
 ### HARD RULE — no customer data in this repository
 
@@ -52,17 +46,11 @@ DSNs are also client-side identifiers and are generated only into the scoped SDK
 telemetry resource. Never add Sentry auth tokens, symbol-upload credentials, or
 unapproved analytics credentials.
 
-### HARD RULE — releases and `pod trunk push` are internal-only
+### HARD RULE — releases are internal-only
 
-Do not bump `spec.version`, do not create release tags, and never run
-`pod trunk push`. Releases are cut by GlomoPay, and each one requires a
+Do not create release tags. Releases are cut by GlomoPay, and each one requires a
 compliance/security sign-off on the public artifact before it ships. That gate is
-not optional and has been missed once already on this SDK.
-
-**CocoaPods Trunk is append-only.** A published version cannot be deleted or
-overwritten — removal requires CocoaPods maintainer intervention and is not
-guaranteed. An accidental push of a broken version is permanent and public.
-Treat every publish as irreversible, because it is.
+not optional.
 
 ---
 
@@ -90,11 +78,9 @@ equivalent, so this is enforced by review.
   privacy report.
 - A payments SDK falls under Apple's **commonly used third-party SDK** signing
   requirement. Release artifacts must be signed.
-- Deployment target is **iOS 15.0**; Swift **5.9**. Do not raise either without
+- Deployment target is **iOS 16.0**; Swift **5.9**. Do not raise either without
   raising it with GlomoPay first — it is a product decision affecting merchants.
-- Support both **SwiftPM** and **CocoaPods**. `Package.swift` and
-  `glomo-ios-sdk.podspec` must stay in sync; a change to source layout affects both.
-- `spec.version` must always equal the git tag.
+- Support **Swift Package Manager** distribution. CocoaPods is not a release channel for this SDK.
 
 ## 4. Behavioural parity
 

@@ -14,7 +14,9 @@ let package = Package(
     defaultLocalization: "en",
     platforms: [
         .iOS(.v16),
-        .macOS(.v10_15),
+        // macOS exists only so `swift test` can run on a Mac host. It must stay at or above the
+        // newest Sentry 9.x floor (macOS 12 as of 9.29), or resolution fails for the range below.
+        .macOS(.v12),
     ],
     products: [
         .library(name: "glomo-ios-sdk", targets: ["GlomoPaySDK"]),

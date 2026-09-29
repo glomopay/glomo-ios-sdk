@@ -324,6 +324,49 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
         XCTAssertFalse(request.bodyText.contains("someone@example.com"))
     }
 
+    func testReporterBuildsExactlyTheKeysTheClientAccepts() throws {
+        let wire = SentryWire()
+        let reporter = try makeReporter(wire)
+
+        let event = reporter.buildEvent(
+            operation: "load_checkout",
+            errorType: "SyntheticError",
+            context: ["source": "api"],
+            flowType: "standard",
+            breadcrumbs: [["message": "loaded"]],
+            capturedAt: Date()
+        )
+
+        // A key added to the reporter but not to the allowlist would be dropped silently before
+        // the wire; a key allowed but never built is dead. Either fails here.
+        XCTAssertEqual(Set(event.keys), SentryEnvelopeClient.allowedCallerKeys)
+    }
+
+    func testEventTimestampIsTheCaptureInstantAndSentAtIsTheSendInstant() throws {
+        let wire = SentryWire()
+        let capturedAt = Date(timeIntervalSince1970: 1_790_000_000.25)
+        // For example, the app was suspended right after the failure and resumed 45 minutes later.
+        let sentAt = capturedAt.addingTimeInterval(45 * 60)
+        let reporter = IsolatedSentryErrorReporter(
+            client: try wire.makeClient(now: { sentAt }),
+            sessionID: "session-uuid",
+            initialFlowType: "standard",
+            devMode: false,
+            now: { capturedAt }
+        )
+
+        reporter.capture(operation: "load_checkout", error: SyntheticError(), context: [:])
+        reporter.flush(timeout: deliveryTimeout)
+
+        let request = try XCTUnwrap(wire.requests.first)
+        XCTAssertEqual(try request.event()["timestamp"] as? Double, capturedAt.timeIntervalSince1970)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let header = try XCTUnwrap(try request.envelopeHeader()["sent_at"] as? String)
+        let parsedSentAt = try XCTUnwrap(formatter.date(from: header))
+        XCTAssertEqual(parsedSentAt.timeIntervalSince1970, sentAt.timeIntervalSince1970, accuracy: 0.001)
+    }
+
     // MARK: Privacy
 
     func testContextOutsideTheAllowlistNeverReachesTheWire() throws {

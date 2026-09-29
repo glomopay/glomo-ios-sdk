@@ -42,9 +42,11 @@ final class SentryEnvelopeClient: @unchecked Sendable {
 
     /// Only these top-level event keys are accepted from callers. Anything else, notably `user`,
     /// `request`, `contexts` or `server_name`, never reaches the wire; `contexts` is only ever the
-    /// client's own `SentryDeviceContext`.
-    private static let allowedCallerKeys: Set<String> = [
-        "level", "logger", "message", "tags", "extra", "breadcrumbs",
+    /// client's own `SentryDeviceContext`. A test pins this to exactly the keys
+    /// `IsolatedSentryErrorReporter` builds, so adding a key on one side fails until the other
+    /// agrees instead of being dropped silently here.
+    static let allowedCallerKeys: Set<String> = [
+        "level", "logger", "message", "tags", "extra", "breadcrumbs", "timestamp",
     ]
 
     let dsn: SentryDSN
@@ -237,7 +239,14 @@ final class SentryEnvelopeClient: @unchecked Sendable {
             prepared["extra"] = extra
         }
         prepared["event_id"] = eventID
-        prepared["timestamp"] = timestamp.timeIntervalSince1970
+        // `timestamp` is when the failure happened, taken by the caller at capture; `sent_at` in
+        // the envelope header stays the send time, and the gap is what lets Relay correct for
+        // device clock skew. Only a caller that supplies none gets the send time.
+        if let captured = event["timestamp"] as? Double, captured.isFinite {
+            prepared["timestamp"] = captured
+        } else {
+            prepared["timestamp"] = timestamp.timeIntervalSince1970
+        }
         prepared["platform"] = Self.platform
         prepared["environment"] = Self.environment
         prepared["release"] = Self.release

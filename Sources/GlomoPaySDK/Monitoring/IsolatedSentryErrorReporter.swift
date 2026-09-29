@@ -17,6 +17,7 @@ final class IsolatedSentryErrorReporter: SDKErrorReporting, @unchecked Sendable 
     private let sessionID: String
     private let orderID: String?
     private let devMode: Bool
+    private let now: () -> Date
     private let lock = NSLock()
     private var flowType: String
     private var breadcrumbs: [[String: Any]] = []
@@ -29,9 +30,11 @@ final class IsolatedSentryErrorReporter: SDKErrorReporting, @unchecked Sendable 
         sessionID: String,
         orderID: String? = nil,
         initialFlowType: String,
-        devMode: Bool
+        devMode: Bool,
+        now: @escaping () -> Date = Date.init
     ) {
         self.client = client
+        self.now = now
         self.sessionID = sessionID
         self.orderID = orderID.flatMap { $0.isEmpty ? nil : String($0.prefix(200)) }
         self.flowType = initialFlowType
@@ -57,23 +60,33 @@ final class IsolatedSentryErrorReporter: SDKErrorReporting, @unchecked Sendable 
         }
     }
 
-    /// Snapshots the mutable state (flow type, breadcrumbs) now, so the event reflects the moment
-    /// of the failure, and leaves sanitisation and building to the client's queue, which skips
-    /// both entirely when the event is going to be dropped.
+    /// Snapshots the moment of the failure (its time, flow type and breadcrumbs) now, and leaves
+    /// sanitisation and building to the client's queue, which skips both entirely when the event
+    /// is going to be dropped.
     func capture(operation: String, error: Error, context: [String: Any?]) {
+        let capturedAt = now()
         let state: (String, [[String: Any]]) = lock.glomoWithLock { (flowType, breadcrumbs) }
         let errorType = String(describing: type(of: error))
         client.capture { [self] in
-            buildEvent(operation: operation, errorType: errorType, context: context, flowType: state.0, breadcrumbs: state.1)
+            buildEvent(
+                operation: operation,
+                errorType: errorType,
+                context: context,
+                flowType: state.0,
+                breadcrumbs: state.1,
+                capturedAt: capturedAt
+            )
         }
     }
 
-    private func buildEvent(
+    /// Internal so a test can pin its keys to `SentryEnvelopeClient.allowedCallerKeys`.
+    func buildEvent(
         operation: String,
         errorType: String,
         context: [String: Any?],
         flowType: String,
-        breadcrumbs: [[String: Any]]
+        breadcrumbs: [[String: Any]],
+        capturedAt: Date
     ) -> [String: Any] {
         let safeOperation = AnalyticsSanitizer.text(operation, limit: 80)
         var tags = [
@@ -89,6 +102,7 @@ final class IsolatedSentryErrorReporter: SDKErrorReporting, @unchecked Sendable 
             "message": ["formatted": "\(safeOperation) failed (\(errorType))"],
             "tags": tags,
             "extra": ["session_id": sessionID].merging(safeContext(context)) { _, new in new },
+            "timestamp": capturedAt.timeIntervalSince1970,
         ]
         if !breadcrumbs.isEmpty {
             event["breadcrumbs"] = ["values": breadcrumbs]

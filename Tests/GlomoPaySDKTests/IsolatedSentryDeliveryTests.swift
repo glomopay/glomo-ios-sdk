@@ -26,6 +26,7 @@ final class IsolatedSentryDeliveryTests: XCTestCase {
 
         let runID = "delivery-test-\(Int(Date().timeIntervalSince1970))"
         let event: [String: Any] = [
+            "timestamp": Date().timeIntervalSince1970,
             "level": "error",
             "logger": IsolatedSentryErrorReporter.logger,
             "message": ["formatted": "GlomoPay SDK delivery test - safe to resolve (\(runID))"],

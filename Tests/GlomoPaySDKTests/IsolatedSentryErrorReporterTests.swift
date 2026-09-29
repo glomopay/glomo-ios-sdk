@@ -184,7 +184,7 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
         XCTAssertEqual(extra.count, 3)
     }
 
-    func testEventIdentifiesTheHostReleaseAndTheGlomoSDK() throws {
+    func testEventReleaseAndEnvironmentAreTheGlomoSDKNotTheHostApp() throws {
         let wire = SentryWire()
         let client = try wire.makeClient(infoDictionary: [
             "CFBundleIdentifier": "com.example.merchant",
@@ -202,9 +202,10 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
         reporter.flush(timeout: deliveryTimeout)
 
         let event = try XCTUnwrap(wire.requests.first).event()
-        XCTAssertEqual(event["release"] as? String, "com.example.merchant@3.2.1+45")
-        XCTAssertEqual(event["dist"] as? String, "45")
-        XCTAssertEqual(event["environment"] as? String, "production")
+        XCTAssertEqual(event["release"] as? String, "glomo-ios-sdk@\(GlomoPaySDKBuild.version)")
+        XCTAssertEqual(event["environment"] as? String, "glomo-ios-sdk")
+        XCTAssertNil(event["dist"])
+        XCTAssertFalse(try XCTUnwrap(wire.requests.first).bodyText.contains("com.example.merchant"))
         XCTAssertEqual(event["platform"] as? String, "cocoa")
         let sdk = try XCTUnwrap(event["sdk"] as? [String: Any])
         XCTAssertEqual(sdk["name"] as? String, "glomo-ios-sdk")
@@ -367,8 +368,9 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
         if hostName.count >= 8, hostName != "localhost" {
             XCTAssertFalse(request.bodyText.contains(hostName), "the machine's host name reached the wire")
         }
-        // The bundle id travels only inside `release`, as it did with sentry-cocoa.
-        XCTAssertEqual(request.bodyText.components(separatedBy: "com.example.merchant").count - 1, 1)
+        // The host bundle id is not sent anywhere, not even inside `release`.
+        XCTAssertFalse(request.bodyText.contains("com.example.merchant"))
+        XCTAssertNil(try request.event()["dist"])
     }
 
     // MARK: Breadcrumbs

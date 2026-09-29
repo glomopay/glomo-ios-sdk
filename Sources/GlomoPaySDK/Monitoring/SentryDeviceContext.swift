@@ -5,8 +5,8 @@ import Foundation
 ///
 /// Non-PII only, and nothing the SDK's analytics does not already collect. It deliberately leaves
 /// out the device name, identifierForVendor, advertising id, IP, locale, timezone, battery,
-/// memory and view-controller names. `release` already carries the host bundle id, so `app` holds
-/// only the version and build.
+/// memory and view-controller names. `app` holds only the host app's version and build; its bundle
+/// id and name are not sent.
 ///
 /// Built from `ProcessInfo`, `uname` and `sysctl`, which are thread-safe, so it never touches
 /// `UIDevice` or anything else that is main-thread only. The client builds it once, at init.

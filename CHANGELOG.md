@@ -137,6 +137,11 @@ All notable changes to the GlomoPay iOS SDK are documented here.
   spool. Events now identify as `glomo-ios-sdk/<SDK version>` (`sdk.name`, `sentry_client`,
   `User-Agent`) instead of `sentry.cocoa/9.19.1`, matching Android's `glomo-android-sdk`, so
   Sentry-side filters, alerts and dashboards matching `sdk.name:sentry.cocoa` must be updated.
+  `release` is now `glomo-ios-sdk@<SDK version>` and `environment` is `glomo-ios-sdk`, matching
+  Android, and `dist` is no longer sent: Sentry releases are now per SDK version instead of per
+  host app version (previously the host's `bundleId@version+build`, with `environment`
+  `production`). The host bundle id is no longer sent anywhere; the host app's version and build
+  are only in `contexts.app`.
   `contexts` is reduced to `os` (name, version, build), `device` (hardware model, family,
   simulator) and `app` (host version and build); sentry-cocoa's battery, memory, orientation,
   thermal, locale, timezone and view-controller-name fields are no longer sent. Sentry events

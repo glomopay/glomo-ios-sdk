@@ -27,8 +27,11 @@ final class SentryEnvelopeClient: @unchecked Sendable {
     static let sdkName = "glomo-ios-sdk"
     static let sdkVersion = GlomoPaySDKBuild.version
     static let platform = "cocoa"
-    /// sentry-cocoa's default environment, which the previous client never overrode.
-    static let environment = "production"
+    /// Matches Android (`glomo-android-sdk@<version>`, environment `glomo-android-sdk`): Sentry
+    /// releases track the SDK version, not the host app's. The host app's version and build are
+    /// only in `contexts.app`, and its bundle id is not sent at all.
+    static let release = "\(sdkName)@\(sdkVersion)"
+    static let environment = sdkName
     /// Bounded, so a stalled network can never hold a checkout's telemetry for long. Matches the
     /// Mixpanel transport.
     static let requestTimeout: TimeInterval = 10
@@ -48,8 +51,6 @@ final class SentryEnvelopeClient: @unchecked Sendable {
     private let session: URLSession
     private let rateLimiter: SentryRateLimiter
     private let now: () -> Date
-    private let release: String?
-    private let dist: String?
     private let contexts: [String: Any]
     private let queue = DispatchQueue(label: "com.glomopay.sdk.sentry", qos: .utility)
     private let inFlight = DispatchGroup()
@@ -72,8 +73,6 @@ final class SentryEnvelopeClient: @unchecked Sendable {
         self.session = URLSession(configuration: sessionConfiguration)
         self.now = now
         self.rateLimiter = SentryRateLimiter(now: now)
-        self.release = Self.release(from: infoDictionary)
-        self.dist = infoDictionary?["CFBundleVersion"] as? String
         self.contexts = SentryDeviceContext.make(infoDictionary: infoDictionary)
     }
 
@@ -187,8 +186,7 @@ final class SentryEnvelopeClient: @unchecked Sendable {
         prepared["timestamp"] = timestamp.timeIntervalSince1970
         prepared["platform"] = Self.platform
         prepared["environment"] = Self.environment
-        prepared["release"] = release
-        prepared["dist"] = dist
+        prepared["release"] = Self.release
         prepared["contexts"] = contexts
         prepared["sdk"] = [
             "name": Self.sdkName,
@@ -202,14 +200,5 @@ final class SentryEnvelopeClient: @unchecked Sendable {
         completion?(outcome)
         lock.glomoWithLock { inFlightCount -= 1 }
         inFlight.leave()
-    }
-
-    /// sentry-cocoa's default release: the host app's `bundleId@version+build`.
-    private static func release(from infoDictionary: [String: Any]?) -> String? {
-        guard let infoDictionary else { return nil }
-        let identifier = infoDictionary["CFBundleIdentifier"] as? String ?? ""
-        let version = infoDictionary["CFBundleShortVersionString"] as? String ?? ""
-        let build = infoDictionary["CFBundleVersion"] as? String ?? ""
-        return "\(identifier)@\(version)+\(build)"
     }
 }

@@ -72,7 +72,9 @@ device and app context. The SDK sets `sdk.settings.infer_ip: auto`, and Sentry t
 from the connection, for correlation with backend and edge logs. The privacy manifest declares
 coarse location for analytics and app functionality.
 
-Events identify as `glomo-ios-sdk/<SDK version>`. The `contexts` block carries: OS name, version
+Events identify as `glomo-ios-sdk/<SDK version>`, with `release` `glomo-ios-sdk@<SDK version>`
+and `environment` `glomo-ios-sdk`, so Sentry releases track the SDK version, not the host app's.
+No `dist` and no host bundle id are sent. The `contexts` block carries: OS name, version
 and build; the device's hardware model identifier, family and a simulator flag; and the host
 app's version and build. No device name, vendor or advertising identifier, locale, timezone,
 battery, memory or view names are sent.

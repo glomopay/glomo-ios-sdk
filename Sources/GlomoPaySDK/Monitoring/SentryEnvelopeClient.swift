@@ -10,12 +10,22 @@ import Foundation
 /// Deliberately not an SDK: it installs no crash or exception handlers, swizzles nothing, keeps
 /// no global scope, and writes nothing to disk. It only POSTs events GlomoPay code hands it.
 /// Every failure is swallowed; telemetry must never throw into, block, or crash checkout.
+/// What happened to one captured event.
+enum SentrySendOutcome: Equatable, Sendable {
+    /// Sentry answered with an HTTP status, successful or not.
+    case responded(eventID: String, statusCode: Int)
+    /// The request failed in transport and was not retried.
+    case failed(eventID: String)
+    /// Never sent: rate limited, over the in-flight bound, or not encodable.
+    case dropped
+}
+
 final class SentryEnvelopeClient: @unchecked Sendable {
-    /// Kept identical to what the sentry-cocoa 9.19.1 client reported, so Sentry-side issue
-    /// search, alert rules and dashboards filtering on `sdk.name` or `platform` keep matching.
-    /// The version is frozen at the last sentry-cocoa release this SDK shipped.
-    static let sdkName = "sentry.cocoa"
-    static let sdkVersion = "9.19.1"
+    /// The SDK identifies as itself, not as sentry-cocoa, matching Android's
+    /// `glomo-android-sdk/<version>`. Sent as `sdk.name`/`sdk.version`, `sentry_client` and
+    /// `User-Agent`.
+    static let sdkName = "glomo-ios-sdk"
+    static let sdkVersion = GlomoPaySDKBuild.version
     static let platform = "cocoa"
     /// sentry-cocoa's default environment, which the previous client never overrode.
     static let environment = "production"
@@ -27,8 +37,9 @@ final class SentryEnvelopeClient: @unchecked Sendable {
     /// Sentry rejects larger events; refusing them locally avoids a pointless upload.
     static let maxEnvelopeBytes = 512 * 1_024
 
-    /// Only these top-level event keys are sent. Anything else a caller adds, notably `user`,
-    /// `request`, `contexts` or `server_name`, never reaches the wire.
+    /// Only these top-level event keys are accepted from callers. Anything else, notably `user`,
+    /// `request`, `contexts` or `server_name`, never reaches the wire; `contexts` is only ever the
+    /// client's own `SentryDeviceContext`.
     private static let allowedCallerKeys: Set<String> = [
         "level", "logger", "message", "tags", "extra", "breadcrumbs",
     ]
@@ -39,6 +50,7 @@ final class SentryEnvelopeClient: @unchecked Sendable {
     private let now: () -> Date
     private let release: String?
     private let dist: String?
+    private let contexts: [String: Any]
     private let queue = DispatchQueue(label: "com.glomopay.sdk.sentry", qos: .utility)
     private let inFlight = DispatchGroup()
     private let lock = NSLock()
@@ -62,6 +74,7 @@ final class SentryEnvelopeClient: @unchecked Sendable {
         self.rateLimiter = SentryRateLimiter(now: now)
         self.release = Self.release(from: infoDictionary)
         self.dist = infoDictionary?["CFBundleVersion"] as? String
+        self.contexts = SentryDeviceContext.make(infoDictionary: infoDictionary)
     }
 
     deinit {
@@ -84,7 +97,9 @@ final class SentryEnvelopeClient: @unchecked Sendable {
     }
 
     /// Returns immediately. Encoding and delivery happen on a private utility queue.
-    func capture(event: [String: Any]) {
+    /// `completion`, if given, runs once with the outcome before `flush(timeout:)` can observe the
+    /// send as finished. Production callers pass none; it exists for delivery verification.
+    func capture(event: [String: Any], completion: (@Sendable (SentrySendOutcome) -> Void)? = nil) {
         let admitted: Bool = lock.glomoWithLock {
             guard inFlightCount < Self.maxInFlight else { return false }
             inFlightCount += 1
@@ -92,11 +107,12 @@ final class SentryEnvelopeClient: @unchecked Sendable {
         }
         guard admitted else {
             GlomoPayLogger.error("Sentry event dropped: too many sends in flight")
+            completion?(.dropped)
             return
         }
         inFlight.enter()
         queue.async { [self] in
-            send(event: event)
+            send(event: event, completion: completion)
         }
     }
 
@@ -107,10 +123,10 @@ final class SentryEnvelopeClient: @unchecked Sendable {
         _ = inFlight.wait(timeout: .now() + seconds)
     }
 
-    private func send(event: [String: Any]) {
+    private func send(event: [String: Any], completion: (@Sendable (SentrySendOutcome) -> Void)?) {
         guard !rateLimiter.isLimited(SentryRateLimiter.errorCategory) else {
             GlomoPayLogger.error("Sentry event dropped: rate limited")
-            finish()
+            finish(.dropped, completion)
             return
         }
         let eventID = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
@@ -125,7 +141,7 @@ final class SentryEnvelopeClient: @unchecked Sendable {
             body.count <= Self.maxEnvelopeBytes
         else {
             GlomoPayLogger.error("Sentry event dropped: it could not be encoded")
-            finish()
+            finish(.dropped, completion)
             return
         }
 
@@ -143,7 +159,9 @@ final class SentryEnvelopeClient: @unchecked Sendable {
         request.httpBody = body
 
         session.dataTask(with: request) { [self] _, response, error in
+            var outcome = SentrySendOutcome.failed(eventID: eventID)
             if let response = response as? HTTPURLResponse {
+                outcome = .responded(eventID: eventID, statusCode: response.statusCode)
                 rateLimiter.update(
                     statusCode: response.statusCode,
                     rateLimits: response.value(forHTTPHeaderField: "X-Sentry-Rate-Limits"),
@@ -155,13 +173,14 @@ final class SentryEnvelopeClient: @unchecked Sendable {
             } else if let error {
                 GlomoPayLogger.error("Sentry event delivery failed", error: error)
             }
-            finish()
+            finish(outcome, completion)
         }.resume()
     }
 
-    /// Adds the fields `SentryClient` used to fill from its options. The previous client sent no
-    /// `user`, no `request` and no IP; `infer_ip: never` stops Sentry deriving one from the
-    /// connection, which it otherwise does by default for the Cocoa platform.
+    /// Adds the fields `SentryClient` used to fill from its options. No `user` object and no
+    /// `request` are sent. `infer_ip: auto` asks Sentry to store the connection's public IP as
+    /// `user.ip_address` and derive geo from it, for correlation with backend and edge logs;
+    /// declared as coarse location for app functionality in `PrivacyInfo.xcprivacy`.
     private func prepare(_ event: [String: Any], eventID: String, timestamp: Date) -> [String: Any] {
         var prepared = event.filter { Self.allowedCallerKeys.contains($0.key) }
         prepared["event_id"] = eventID
@@ -170,15 +189,17 @@ final class SentryEnvelopeClient: @unchecked Sendable {
         prepared["environment"] = Self.environment
         prepared["release"] = release
         prepared["dist"] = dist
+        prepared["contexts"] = contexts
         prepared["sdk"] = [
             "name": Self.sdkName,
             "version": Self.sdkVersion,
-            "settings": ["infer_ip": "never"],
+            "settings": ["infer_ip": "auto"],
         ] as [String: Any]
         return prepared
     }
 
-    private func finish() {
+    private func finish(_ outcome: SentrySendOutcome, _ completion: (@Sendable (SentrySendOutcome) -> Void)?) {
+        completion?(outcome)
         lock.glomoWithLock { inFlightCount -= 1 }
         inFlight.leave()
     }

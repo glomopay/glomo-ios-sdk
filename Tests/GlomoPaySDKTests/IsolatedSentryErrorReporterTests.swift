@@ -4,7 +4,9 @@ import XCTest
 /// Behaviour of SDK error reporting as observed on the wire. See `SentryWire` for why requests
 /// are intercepted at the `URLSession` boundary rather than by substituting SDK types.
 final class IsolatedSentryErrorReporterTests: XCTestCase {
-    private let deliveryTimeout: TimeInterval = 10
+    /// Generous so a starved CI scheduler cannot let a flush expire before a response is handled;
+    /// a healthy run finishes each send in milliseconds.
+    private let deliveryTimeout: TimeInterval = 30
 
     // MARK: Envelope format
 
@@ -60,7 +62,11 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
         XCTAssertTrue(auth.hasPrefix("Sentry "), auth)
         XCTAssertTrue(auth.contains("sentry_version=7"), auth)
         XCTAssertTrue(auth.contains("sentry_key=\(SentryWire.publicKey)"), auth)
-        XCTAssertTrue(auth.contains("sentry_client=sentry.cocoa/9.19.1"), auth)
+        XCTAssertTrue(auth.contains("sentry_client=glomo-ios-sdk/\(GlomoPaySDKBuild.version)"), auth)
+        XCTAssertEqual(
+            request.value(forHTTPHeaderField: "User-Agent"),
+            "glomo-ios-sdk/\(GlomoPaySDKBuild.version)"
+        )
         XCTAssertFalse(auth.contains("sentry_secret"), auth)
     }
 
@@ -178,7 +184,7 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
         XCTAssertEqual(extra.count, 3)
     }
 
-    func testEventIdentifiesTheHostReleaseLikeTheSentryCocoaDefaults() throws {
+    func testEventIdentifiesTheHostReleaseAndTheGlomoSDK() throws {
         let wire = SentryWire()
         let client = try wire.makeClient(infoDictionary: [
             "CFBundleIdentifier": "com.example.merchant",
@@ -201,8 +207,10 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
         XCTAssertEqual(event["environment"] as? String, "production")
         XCTAssertEqual(event["platform"] as? String, "cocoa")
         let sdk = try XCTUnwrap(event["sdk"] as? [String: Any])
-        XCTAssertEqual(sdk["name"] as? String, "sentry.cocoa")
-        XCTAssertEqual(sdk["version"] as? String, "9.19.1")
+        XCTAssertEqual(sdk["name"] as? String, "glomo-ios-sdk")
+        XCTAssertEqual(sdk["version"] as? String, GlomoPaySDKBuild.version)
+        let app = (event["contexts"] as? [String: Any])?["app"] as? [String: String]
+        XCTAssertEqual(app, ["app_version": "3.2.1", "app_build": "45"])
         XCTAssertEqual((event["tags"] as? [String: String])?["dev_mode"], "true")
         XCTAssertNotNil(event["timestamp"] as? Double)
     }
@@ -263,7 +271,7 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
         XCTAssertEqual(crumb["data"] as? [String: String], ["webview_type": "main"])
     }
 
-    func testEventCarriesNoUserRequestIPOrStackTrace() throws {
+    func testEventCarriesNoUserFieldsRequestOrStackTraceAndAsksSentryToInferTheIP() throws {
         let wire = SentryWire()
         let reporter = try makeReporter(wire)
 
@@ -272,14 +280,95 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
 
         let request = try XCTUnwrap(wire.requests.first)
         let event = try request.event()
-        for key in ["user", "request", "contexts", "server_name", "threads", "exception", "debug_meta"] {
+        for key in ["user", "request", "server_name", "threads", "exception", "debug_meta"] {
             XCTAssertNil(event[key], "\(key) was sent")
         }
-        XCTAssertFalse(request.bodyText.contains("ip_address"))
-        XCTAssertFalse(request.bodyText.contains("{{auto}}"))
-        let settings = (event["sdk"] as? [String: Any])?["settings"] as? [String: String]
-        XCTAssertEqual(settings, ["infer_ip": "never"])
+        // No user object at all, so no user id, email, username or name; the IP is added by
+        // Sentry from the connection, never by the SDK.
+        for fragment in ["\"email\"", "username", "\"ip_address\"", "{{auto}}"] {
+            XCTAssertFalse(request.bodyText.contains(fragment), "\(fragment) was sent")
+        }
+        let sdk = try XCTUnwrap(event["sdk"] as? [String: Any])
+        XCTAssertEqual(Set(sdk.keys), ["name", "version", "settings"])
+        XCTAssertEqual(sdk["settings"] as? [String: String], ["infer_ip": "auto"])
         XCTAssertNil(request.request.value(forHTTPHeaderField: "Cookie"))
+    }
+
+    func testContextsCarryOnlyOSAndDeviceIdentity() throws {
+        let wire = SentryWire()
+        let reporter = try makeReporter(wire)
+
+        reporter.capture(operation: "load_checkout", error: SyntheticError(), context: [:])
+        reporter.flush(timeout: deliveryTimeout)
+
+        let request = try XCTUnwrap(wire.requests.first)
+        let contexts = try XCTUnwrap(request.event()["contexts"] as? [String: Any])
+        // No host info dictionary in this client, so there is no app context.
+        XCTAssertEqual(Set(contexts.keys), ["os", "device"])
+
+        let os = try XCTUnwrap(contexts["os"] as? [String: Any])
+        XCTAssertTrue(Set(os.keys).isSubset(of: ["name", "version", "build"]), "\(os.keys)")
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        let osVersion = try XCTUnwrap(os["version"] as? String)
+        XCTAssertTrue(osVersion.hasPrefix("\(version.majorVersion).\(version.minorVersion)"), osVersion)
+        XCTAssertNotNil(os["build"] as? String)
+
+        let device = try XCTUnwrap(contexts["device"] as? [String: Any])
+        XCTAssertTrue(Set(device.keys).isSubset(of: ["model", "family", "simulator"]), "\(device.keys)")
+        let model = try XCTUnwrap(device["model"] as? String)
+        XCTAssertFalse(model.isEmpty)
+        #if os(iOS)
+        XCTAssertEqual(os["name"] as? String, "iOS")
+        XCTAssertEqual(device["family"] as? String, model.hasPrefix("iPad") ? "iPad" : "iOS")
+        #else
+        XCTAssertEqual(os["name"] as? String, "macOS")
+        XCTAssertEqual(device["family"] as? String, "macOS")
+        #endif
+        #if targetEnvironment(simulator)
+        XCTAssertEqual(device["simulator"] as? Bool, true)
+        XCTAssertTrue(model.hasPrefix("iPhone") || model.hasPrefix("iPad"), model)
+        #else
+        XCTAssertEqual(device["simulator"] as? Bool, false)
+        #endif
+    }
+
+    func testContextsNeverCarryIdentifyingOrVolatileDeviceData() throws {
+        let wire = SentryWire()
+        let client = try wire.makeClient(infoDictionary: [
+            "CFBundleIdentifier": "com.example.merchant",
+            "CFBundleName": "Merchant Wallet",
+            "CFBundleDisplayName": "Merchant Wallet Display",
+            "CFBundleShortVersionString": "3.2.1",
+            "CFBundleVersion": "45",
+        ])
+        let reporter = IsolatedSentryErrorReporter(
+            client: client,
+            sessionID: "session-uuid",
+            initialFlowType: "standard",
+            devMode: false
+        )
+
+        reporter.capture(operation: "load_checkout", error: SyntheticError(), context: [:])
+        reporter.flush(timeout: deliveryTimeout)
+
+        let request = try XCTUnwrap(wire.requests.first)
+        let contexts = try XCTUnwrap(request.event()["contexts"] as? [String: Any])
+        XCTAssertEqual(Set(contexts.keys), ["os", "device", "app"])
+        XCTAssertEqual(contexts["app"] as? [String: String], ["app_version": "3.2.1", "app_build": "45"])
+        XCTAssertNil((contexts["device"] as? [String: Any])?["name"])
+        for fragment in [
+            "Merchant Wallet", "app_name", "app_identifier", "device_name", "identifierForVendor",
+            "vendor_id", "advertising", "idfa", "ip_address", "locale", "timezone", "culture",
+            "battery", "memory", "orientation", "thermal", "view_names", "charging", "storage",
+        ] {
+            XCTAssertFalse(request.bodyText.contains(fragment), "\(fragment) reached the wire")
+        }
+        let hostName = ProcessInfo.processInfo.hostName
+        if hostName.count >= 8, hostName != "localhost" {
+            XCTAssertFalse(request.bodyText.contains(hostName), "the machine's host name reached the wire")
+        }
+        // The bundle id travels only inside `release`, as it did with sentry-cocoa.
+        XCTAssertEqual(request.bodyText.components(separatedBy: "com.example.merchant").count - 1, 1)
     }
 
     // MARK: Breadcrumbs
@@ -412,6 +501,31 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
         )
     }
 
+    func testCaptureReportsWhatHappenedToEachSend() throws {
+        let wire = SentryWire()
+        let client = try wire.makeClient()
+        wire.script(.status(200), .failure(.notConnectedToInternet), .status(429, headers: ["Retry-After": "60"]))
+        let recorder = OutcomeRecorder()
+
+        for _ in 0..<4 {
+            let done = expectation(description: "outcome")
+            client.capture(event: ["level": "error"]) { outcome in
+                recorder.append(outcome)
+                done.fulfill()
+            }
+            wait(for: [done], timeout: deliveryTimeout)
+        }
+
+        let eventIDs = try wire.requests.map { try XCTUnwrap($0.envelopeHeader()["event_id"] as? String) }
+        XCTAssertEqual(eventIDs.count, 3)
+        XCTAssertEqual(recorder.outcomes, [
+            .responded(eventID: eventIDs[0], statusCode: 200),
+            .failed(eventID: eventIDs[1]),
+            .responded(eventID: eventIDs[2], statusCode: 429),
+            .dropped,
+        ])
+    }
+
     func testCaptureReturnsWithoutWaitingForTheNetwork() throws {
         let wire = SentryWire()
         wire.replyToEverything(.held)
@@ -519,3 +633,14 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
 }
 
 private struct SyntheticError: Error {}
+
+private final class OutcomeRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [SentrySendOutcome] = []
+
+    var outcomes: [SentrySendOutcome] { lock.glomoWithLock { recorded } }
+
+    func append(_ outcome: SentrySendOutcome) {
+        lock.glomoWithLock { recorded.append(outcome) }
+    }
+}

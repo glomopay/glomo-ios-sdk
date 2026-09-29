@@ -65,25 +65,41 @@ The SDK has no Sentry SDK dependency. It reports explicitly captured SDK and ana
 failures by POSTing Sentry envelopes over `URLSession` to the endpoint derived from the bundled
 DSN. It installs no crash or exception handlers, swizzles nothing, keeps no global scope, writes
 nothing to disk, and never touches a merchant-owned Sentry client. Only sanitized, allow-listed
-context is sent; events carry no user, no request, and `infer_ip: never`, so Sentry does not
-attach the connection IP. Requests time out after 10 seconds, are never retried, and anything
+context is sent; events carry no user fields (no id, email, username or name) and no request.
+They set `sdk.settings.infer_ip: auto`, so Sentry stores the device's public IP as it sees the
+connection, and geo derived from it, for correlation with backend and edge logs. Mixpanel already
+receives IP-derived location, so this is not a new data category; the privacy manifest declares
+coarse location for analytics and app functionality. Events identify as `glomo-ios-sdk/<SDK version>`. For triage they carry
+a minimal `contexts` block: OS name, version and build; the device's hardware model identifier,
+family and a simulator flag; and the host app's version and build. No device name, vendor or
+advertising identifier, locale, timezone, battery, memory or view names are sent. Requests time out after 10 seconds, are never retried, and anything
 caught by a Sentry rate limit is dropped rather than queued.
 
 Merchants can use any Sentry version, or none, alongside this SDK.
 
 ### Manual Sentry delivery verification
 
-Release maintainers can send one sanitized synthetic SDK error through the isolated client:
+Release maintainers can send one clearly marked synthetic event (operation `delivery_test`, tag
+`delivery_test=true`, message "GlomoPay SDK delivery test - safe to resolve"). It asserts that
+Sentry answers 200 and prints the event id and the send time in IST, never the DSN:
 
 ```bash
 GLOMOPAY_RUN_SENTRY_DELIVERY_TEST=1 \
 swift test --filter IsolatedSentryDeliveryTests/testManualSDKErrorDelivery
 ```
 
-The test is skipped during normal test runs and does not initialize global Sentry. It sends to
-the bundled DSN unless `GLOMOPAY_SENTRY_DSN` overrides it; point it at a non-production project
-when verifying a change. Confirm the `manual_sentry_delivery_test` event in that project after it
-completes.
+On a simulator, so the event carries iOS OS and device context, pass the variables with the
+`TEST_RUNNER_` prefix, which `xcodebuild` forwards to the test process:
+
+```bash
+TEST_RUNNER_GLOMOPAY_RUN_SENTRY_DELIVERY_TEST=1 \
+TEST_RUNNER_GLOMOPAY_SENTRY_DSN="$(cat path/to/dsn.txt)" \
+xcodebuild test -scheme glomo-ios-sdk -destination "platform=iOS Simulator,name=iPhone 16" \
+  -only-testing:GlomoPaySDKTests/IsolatedSentryDeliveryTests/testManualSDKErrorDelivery
+```
+
+The test is skipped during normal test runs. It sends to the bundled DSN unless
+`GLOMOPAY_SENTRY_DSN` overrides it, and reports which source it used.
 
 ## Symbols
 

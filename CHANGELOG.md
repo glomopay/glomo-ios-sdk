@@ -133,8 +133,17 @@ All notable changes to the GlomoPay iOS SDK are documented here.
   SDK error reporting now sends Sentry envelopes over `URLSession` with the same message, tags,
   extras, breadcrumbs, allowlist and sanitisation. No public API change, and the macOS floor is
   unaffected. Sentry issue grouping may change for new events, which no longer carry a raw
-  capture-site stack trace (unsymbolicated without the merchant's dSYMs), device/app/culture
-  contexts, or an offline retry spool.
+  capture-site stack trace (unsymbolicated without the merchant's dSYMs) or an offline retry
+  spool. Events now identify as `glomo-ios-sdk/<SDK version>` (`sdk.name`, `sentry_client`,
+  `User-Agent`) instead of `sentry.cocoa/9.19.1`, matching Android's `glomo-android-sdk`, so
+  Sentry-side filters, alerts and dashboards matching `sdk.name:sentry.cocoa` must be updated.
+  `contexts` is reduced to `os` (name, version, build), `device` (hardware model, family,
+  simulator) and `app` (host version and build); sentry-cocoa's battery, memory, orientation,
+  thermal, locale, timezone and view-controller-name fields are no longer sent. Events set
+  `infer_ip: auto`, so Sentry stores the device's public IP as it sees the connection and
+  IP-derived geo (sentry-cocoa sent `never`); no other user field is sent. Mixpanel already
+  receives IP-derived location, so this is not a new data category, and the privacy manifest's
+  coarse-location entry now also lists the app-functionality purpose.
 - `CheckoutStatus`, which was declared, referenced nowhere, and carried the member set that
   reported a submitted bank transfer as `paymentSuccessful`.
 - `TerminationSource.backButton`, which has no meaning on iOS: the escapes are the navigation bar's

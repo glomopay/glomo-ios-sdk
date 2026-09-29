@@ -2,7 +2,7 @@ import XCTest
 @testable import GlomoPaySDK
 
 final class PrivacyManifestTests: XCTestCase {
-    func testManifestDeclaresLinkedCoarseLocationForIPAnalytics() throws {
+    func testManifestDeclaresLinkedCoarseLocationForIPAnalyticsAndDiagnostics() throws {
         let manifest = try loadManifest()
         let collected = try XCTUnwrap(manifest["NSPrivacyCollectedDataTypes"] as? [[String: Any]])
         let byType = Dictionary(uniqueKeysWithValues: collected.compactMap { entry in
@@ -14,7 +14,10 @@ final class PrivacyManifestTests: XCTestCase {
         XCTAssertEqual(coarseLocation["NSPrivacyCollectedDataTypeTracking"] as? Bool, false)
         XCTAssertEqual(
             coarseLocation["NSPrivacyCollectedDataTypePurposes"] as? [String],
-            ["NSPrivacyCollectedDataTypePurposeAnalytics"]
+            [
+                "NSPrivacyCollectedDataTypePurposeAnalytics",
+                "NSPrivacyCollectedDataTypePurposeAppFunctionality",
+            ]
         )
 
         for type in [

@@ -61,40 +61,62 @@ network monitoring occurs.
 
 ## Isolated Sentry client
 
-The SDK depends on native Sentry Cocoa through Swift Package Manager with the range
-`9.19.1..<10.0.0`. The lower bound is a compatibility floor, not a forced downgrade: SwiftPM can
-still resolve a newer 9.x release such as `9.24.0` when the merchant graph allows it. Repository
-history does not record a Sentry API reason for preferring `9.19.1` over `9.24.0`; before a
-release raises the minimum to `9.24.0` or any later 9.x version, maintainers should record the
-compatibility reason and rerun the SDK and sample-app checks against that floor. The SDK creates a
-private `SentryClient` and does not invoke `SentrySDK.start`, mutate
-the global scope, or reuse a merchant-owned client. Session Replay, automatic sessions,
-performance tracing, network tracking, and swizzling are disabled. Only explicitly captured
-SDK and analytics-delivery failures are submitted with sanitized, allow-listed context.
+The SDK has no Sentry SDK dependency. It reports explicitly captured SDK and analytics-delivery
+failures by POSTing Sentry envelopes over `URLSession` to the endpoint derived from the bundled
+DSN. It installs no crash or exception handlers, swizzles nothing, keeps no global scope, writes
+nothing to disk, and never touches a merchant-owned Sentry client. Only sanitized, allow-listed
+context is sent; events carry no user fields (no id, email, username or name) and no request.
 
-SwiftPM may download approximately 740 MB of Sentry XCFramework archives on a cold dependency
-resolve. That is a CI cache and dependency-fetch cost, not the application binary size; the final
-merchant app links the platform slice it needs.
+The SDK sends no IP address and sets `sdk.settings.infer_ip: never`. Sentry derives approximate
+location (country, region, city) at ingest and does not store the device IP. The setting is
+required: left unset, Sentry treats the Cocoa platform as `auto` and stores the connection IP.
+The privacy manifest declares coarse location for analytics and app functionality.
 
-Merchants already pinned to a different Sentry major may not be able to resolve this package with
-their graph. That is the documented escape hatch for a future lightweight envelope client, but it
-is not part of this release while native Sentry remains compatible.
+Each event is tagged `order_id` with the checkout's order id (or subscription id), the same value
+analytics sends, so it can be joined to backend logs. When events are discarded (rate limited,
+over the in-flight bound, a 5xx or a transport failure), the next event that goes out carries
+the count as `extra.dropped_since_last_send`, so a quiet project can be told apart from one whose
+reports are being thrown away. The HTTP body is gzip-compressed (`Content-Encoding: gzip`).
+
+Events identify as `glomo-ios-sdk/<SDK version>`, with `release` `glomo-ios-sdk@<SDK version>`
+and `environment` `glomo-ios-sdk`, so Sentry releases track the SDK version, not the host app's.
+No `dist` and no host bundle id are sent. The `contexts` block carries: OS name, version
+and build; the device's hardware model identifier, family and a simulator flag; and the host
+app's version and build. No device name, vendor or advertising identifier, locale, timezone,
+battery, memory or view names are sent.
+
+Requests time out after 10 seconds, are never retried, and anything caught by a Sentry rate
+limit is dropped rather than queued.
+
+Merchants can use any Sentry version, or none, alongside this SDK.
 
 ### Manual Sentry delivery verification
 
-Release maintainers can send one sanitized synthetic SDK error through the isolated client:
+Release maintainers can send one clearly marked synthetic event (operation `delivery_test`, tag
+`delivery_test=true`, message "GlomoPay SDK delivery test - safe to resolve"). It asserts that
+Sentry answers 200 and prints the event id and the send time in IST, never the DSN:
 
 ```bash
 GLOMOPAY_RUN_SENTRY_DELIVERY_TEST=1 \
 swift test --filter IsolatedSentryDeliveryTests/testManualSDKErrorDelivery
 ```
 
-The test is skipped during normal test runs and does not initialize global Sentry. Confirm the
-`manual_sentry_delivery_test` event in the GlomoPay iOS SDK Sentry project after it completes.
+On a simulator, so the event carries iOS OS and device context, pass the variables with the
+`TEST_RUNNER_` prefix, which `xcodebuild` forwards to the test process:
+
+```bash
+TEST_RUNNER_GLOMOPAY_RUN_SENTRY_DELIVERY_TEST=1 \
+TEST_RUNNER_GLOMOPAY_SENTRY_DSN="$(cat path/to/dsn.txt)" \
+xcodebuild test -scheme glomo-ios-sdk -destination "platform=iOS Simulator,name=iPhone 16" \
+  -only-testing:GlomoPaySDKTests/IsolatedSentryDeliveryTests/testManualSDKErrorDelivery
+```
+
+The test is skipped during normal test runs. It sends to the bundled DSN unless
+`GLOMOPAY_SENTRY_DSN` overrides it, and reports which source it used.
 
 ## Symbols
 
-Because the SDK is source-distributed, its release symbols are part of the merchant app's
-dSYM. Complete Sentry symbolication therefore requires the final application dSYM to be
-uploaded to the GlomoPay Sentry project from the release build or CI pipeline. No auth token
-or symbol-upload credential is embedded in the SDK.
+Error events carry no stack trace, so no dSYM upload is needed for SDK error reporting. From a
+merchant's release build the frames would be unsymbolicated addresses in the merchant's binary,
+and GlomoPay never receives the merchant's dSYMs. The event message names the failed operation
+and the error type instead. No auth token or symbol-upload credential is embedded in the SDK.

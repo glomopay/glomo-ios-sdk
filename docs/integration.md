@@ -67,10 +67,15 @@ DSN. It installs no crash or exception handlers, swizzles nothing, keeps no glob
 nothing to disk, and never touches a merchant-owned Sentry client. Only sanitized, allow-listed
 context is sent; events carry no user fields (no id, email, username or name) and no request.
 
-Sentry events record the device's public IP address and IP-derived country and city, plus OS,
-device and app context. The SDK sets `sdk.settings.infer_ip: auto`, and Sentry takes the address
-from the connection, for correlation with backend and edge logs. The privacy manifest declares
-coarse location for analytics and app functionality.
+The SDK sends no IP address. Sentry derives approximate location (country, region, city) from
+the connection at ingest and does not store the device IP. The privacy manifest declares coarse
+location for analytics and app functionality.
+
+Each event is tagged `order_id` with the checkout's order id (or subscription id), the same value
+analytics sends, so it can be joined to backend logs. When events are discarded (rate limited,
+over the in-flight bound, a 5xx or a transport failure), the next event that goes out carries
+the count as `extra.dropped_since_last_send`, so a quiet project can be told apart from one whose
+reports are being thrown away. The HTTP body is gzip-compressed (`Content-Encoding: gzip`).
 
 Events identify as `glomo-ios-sdk/<SDK version>`, with `release` `glomo-ios-sdk@<SDK version>`
 and `environment` `glomo-ios-sdk`, so Sentry releases track the SDK version, not the host app's.

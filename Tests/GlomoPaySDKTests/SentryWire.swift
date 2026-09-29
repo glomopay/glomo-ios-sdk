@@ -19,7 +19,10 @@ final class SentryWire: @unchecked Sendable {
 
     struct Captured {
         let request: URLRequest
+        /// The envelope: the HTTP body after undoing its `Content-Encoding`.
         let body: Data
+        /// The bytes actually sent.
+        let wireBody: Data
 
         var lines: [Data] {
             body.split(separator: 0x0A, omittingEmptySubsequences: true).map { Data($0) }
@@ -55,6 +58,12 @@ final class SentryWire: @unchecked Sendable {
     init(hostPrefix: String = "o4500000000000000.ingest") {
         let unique = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         host = "\(hostPrefix).\(unique).test"
+        Self.register(self)
+    }
+
+    /// Intercepts a real host, so a client built from real configuration never reaches it.
+    init(exactHost: String) {
+        host = exactHost.lowercased()
         Self.register(self)
     }
 
@@ -108,7 +117,10 @@ final class SentryWire: @unchecked Sendable {
 
     fileprivate func receive(_ request: URLRequest, body: Data, via protocolInstance: SentryWireProtocol) -> Reply? {
         lock.glomoWithLock {
-            captured.append(Captured(request: request, body: body))
+            let decoded = request.value(forHTTPHeaderField: "Content-Encoding") == "gzip"
+                ? (Self.gunzip(body) ?? Data())
+                : body
+            captured.append(Captured(request: request, body: decoded, wireBody: body))
             let reply = scripted.isEmpty ? defaultReply : scripted.removeFirst()
             if case .held = reply {
                 if released { return .status(200) }
@@ -117,6 +129,36 @@ final class SentryWire: @unchecked Sendable {
             }
             return reply
         }
+    }
+
+    // MARK: gzip
+
+    /// Test-side gzip decoder, independent of the SDK's encoder: checks the RFC 1952 header,
+    /// inflates the DEFLATE stream with Foundation, and verifies the trailer's CRC-32 (computed
+    /// bit by bit here) and size. Returns nil for anything that is not valid gzip.
+    static func gunzip(_ data: Data) -> Data? {
+        let bytes = [UInt8](data)
+        guard bytes.count >= 18, bytes[0] == 0x1F, bytes[1] == 0x8B, bytes[2] == 0x08, bytes[3] == 0x00 else {
+            return nil
+        }
+        let deflated = Data(bytes[10..<(bytes.count - 8)])
+        guard let inflated = try? (deflated as NSData).decompressed(using: .zlib) as Data else { return nil }
+        let trailer = Array(bytes[(bytes.count - 8)...])
+        let crc = trailer[0..<4].enumerated().reduce(UInt32(0)) { $0 | UInt32($1.element) << (8 * UInt32($1.offset)) }
+        let size = trailer[4..<8].enumerated().reduce(UInt32(0)) { $0 | UInt32($1.element) << (8 * UInt32($1.offset)) }
+        guard size == UInt32(truncatingIfNeeded: inflated.count), crc == bitwiseCRC32(inflated) else { return nil }
+        return inflated
+    }
+
+    static func bitwiseCRC32(_ data: Data) -> UInt32 {
+        var crc: UInt32 = 0xFFFF_FFFF
+        for byte in data {
+            crc ^= UInt32(byte)
+            for _ in 0..<8 {
+                crc = (crc >> 1) ^ (0xEDB8_8320 & (0 &- (crc & 1)))
+            }
+        }
+        return ~crc
     }
 
     // MARK: Registry

@@ -12,9 +12,14 @@ final class SDKTelemetryRuntime: @unchecked Sendable {
     let sentryClient: SentryEnvelopeClient?
     let mixpanelTransport: MixpanelHTTPTransport?
 
-    init(configuration: SDKRuntimeConfiguration) {
+    init(
+        configuration: SDKRuntimeConfiguration,
+        sentrySessionConfiguration: URLSessionConfiguration = SentryEnvelopeClient.defaultSessionConfiguration()
+    ) {
         self.configuration = configuration
-        self.sentryClient = configuration.sentryDSN.flatMap { SentryEnvelopeClient(dsn: $0) }
+        self.sentryClient = configuration.sentryDSN.flatMap {
+            SentryEnvelopeClient(dsn: $0, sessionConfiguration: sentrySessionConfiguration)
+        }
         self.mixpanelTransport = configuration.mixpanelToken.map { MixpanelHTTPTransport(token: $0) }
     }
 

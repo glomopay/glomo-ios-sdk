@@ -1,4 +1,7 @@
 import XCTest
+#if canImport(UIKit)
+import UIKit
+#endif
 @testable import GlomoPaySDK
 
 /// Behaviour of SDK error reporting as observed on the wire. See `SentryWire` for why requests
@@ -105,10 +108,29 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
         XCTAssertTrue(auth.contains("sentry_secret=fakesecret"), auth)
     }
 
-    func testBlankOrMalformedDSNTurnsErrorReportingOff() {
-        let unusable = [
-            "",
-            "   ",
+    // MARK: Production construction path
+    //
+    // Production builds the reporter one way: telemetry values (environment, then the bundled
+    // plist) -> `SDKRuntimeConfiguration.load` -> `SDKTelemetryRuntime` -> `SDKErrorReporterFactory`.
+    // These tests go through all of it.
+
+    func testMissingOrBlankDSNInConfigurationGivesTheNoOpReporter() {
+        let cases: [(environment: [String: String], bundled: [String: String])] = [
+            ([:], [:]),
+            ([:], ["GLOMOPAY_SENTRY_DSN": ""]),
+            ([:], ["GLOMOPAY_SENTRY_DSN": " \n "]),
+            (["GLOMOPAY_SENTRY_DSN": "  "], ["GLOMOPAY_SENTRY_DSN": ""]),
+            ([:], ["GLOMOPAY_MIXPANEL_TOKEN": "token-only"]),
+        ]
+
+        for (environment, bundled) in cases {
+            let reporter = reporterFromConfiguration(environment: environment, bundled: bundled)
+            XCTAssertTrue(reporter is NoOpSDKErrorReporter, "\(environment) \(bundled)")
+        }
+    }
+
+    func testMalformedDSNInConfigurationGivesTheNoOpReporter() {
+        let malformed = [
             "not a dsn",
             "ftp://key@example.test/1",
             "https://example.test/1",
@@ -117,37 +139,103 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
             "https://key@/1",
         ]
 
-        for dsn in unusable {
+        for dsn in malformed {
             XCTAssertNil(SentryEnvelopeClient(dsn: dsn), dsn)
-            let runtime = SDKTelemetryRuntime(
-                configuration: SDKRuntimeConfiguration(mixpanelToken: nil, sentryDSN: dsn)
-            )
-            let reporter = SDKErrorReporterFactory.create(
-                config: GlomoPayConfig(publicKey: "test_public_key", orderId: "order_123"),
-                sessionID: "session-uuid",
-                flowType: "standard",
-                runtime: runtime
-            )
+            let reporter = reporterFromConfiguration(environment: [:], bundled: ["GLOMOPAY_SENTRY_DSN": dsn])
             XCTAssertTrue(reporter is NoOpSDKErrorReporter, dsn)
         }
     }
 
-    func testUsableDSNTurnsErrorReportingOn() {
-        let runtime = SDKTelemetryRuntime(
-            configuration: SDKRuntimeConfiguration(
-                mixpanelToken: nil,
-                sentryDSN: " https://fakepublickey@o1.ingest.example.test/42 "
-            )
+    func testValidConfigurationReportsThroughTheFactoryWithTheCheckoutOrderID() throws {
+        let wire = SentryWire()
+        let reporter = reporterFromConfiguration(
+            environment: [:],
+            bundled: ["GLOMOPAY_SENTRY_DSN": " \(wire.dsn) "],
+            sessionConfiguration: wire.sessionConfiguration(),
+            config: GlomoPayConfig(publicKey: "test_public_key", orderId: "order_test_123"),
+            flowType: "lrs"
         )
 
+        reporter.capture(operation: "order_fetch", error: SyntheticError(), context: ["source": "api"])
+        reporter.flush(timeout: deliveryTimeout)
+
+        let request = try XCTUnwrap(wire.requests.first)
+        XCTAssertEqual(wire.requests.count, 1)
+        let event = try request.event()
+        let tags = try XCTUnwrap(event["tags"] as? [String: String])
+        XCTAssertEqual(tags["order_id"], "order_test_123")
+        XCTAssertEqual(tags["flow_type"], "lrs")
+        XCTAssertEqual(tags["operation"], "order_fetch")
+        XCTAssertEqual((event["extra"] as? [String: Any])?["source"] as? String, "api")
+    }
+
+    func testEnvironmentDSNTakesPrecedenceOverTheBundledOne() throws {
+        let environmentWire = SentryWire()
+        let bundledWire = SentryWire()
+        let configuration = environmentWire.sessionConfiguration()
+        let reporter = reporterFromConfiguration(
+            environment: ["GLOMOPAY_SENTRY_DSN": environmentWire.dsn],
+            bundled: ["GLOMOPAY_SENTRY_DSN": bundledWire.dsn],
+            sessionConfiguration: configuration
+        )
+
+        reporter.capture(operation: "order_fetch", error: SyntheticError(), context: [:])
+        reporter.flush(timeout: deliveryTimeout)
+
+        XCTAssertEqual(environmentWire.requests.count, 1)
+        XCTAssertEqual(bundledWire.requests.count, 0)
+    }
+
+    // The shipped resource is what merchants get. A renamed key or resource would silently turn
+    // error reporting off for every merchant, so read the real one and follow it to the request
+    // it would make. The request is intercepted in-process: nothing reaches Sentry.
+    func testShippedTelemetryResourceProducesAReporterThatTargetsItsDSN() throws {
+        let shipped = SDKRuntimeConfiguration.load(environment: [:])
+        let dsn = try XCTUnwrap(shipped.sentryDSN, "The bundled telemetry resource has no Sentry DSN.")
+        let parsed = try XCTUnwrap(SentryDSN(dsn), "The bundled Sentry DSN does not parse.")
+        let wire = SentryWire(exactHost: try XCTUnwrap(parsed.envelopeURL.host))
+        wire.replyToEverything(.failure(.cannotConnectToHost))
+        let runtime = SDKTelemetryRuntime(configuration: shipped, sentrySessionConfiguration: wire.sessionConfiguration())
+
         let reporter = SDKErrorReporterFactory.create(
-            config: GlomoPayConfig(publicKey: "test_public_key", orderId: "order_123"),
+            config: GlomoPayConfig(publicKey: "test_public_key", orderId: "order_test_123"),
             sessionID: "session-uuid",
             flowType: "standard",
             runtime: runtime
         )
-
         XCTAssertTrue(reporter is IsolatedSentryErrorReporter)
+        reporter.capture(operation: "resource_check", error: SyntheticError(), context: [:])
+        reporter.flush(timeout: deliveryTimeout)
+
+        let request = try XCTUnwrap(wire.requests.first).request
+        XCTAssertEqual(request.url, parsed.envelopeURL)
+        XCTAssertTrue(
+            request.value(forHTTPHeaderField: "X-Sentry-Auth")?.contains("sentry_key=\(parsed.publicKey)") == true
+        )
+    }
+
+    func testOrderIDTagFallsBackToTheSubscriptionAndIsOmittedWithoutEither() throws {
+        let subscriptionWire = SentryWire()
+        let noIDWire = SentryWire()
+        for (wire, config) in [
+            (subscriptionWire, GlomoPayConfig(publicKey: "test_public_key", subscriptionId: "sub_test_9")),
+            (noIDWire, GlomoPayConfig(publicKey: "test_public_key")),
+        ] {
+            let reporter = reporterFromConfiguration(
+                environment: [:],
+                bundled: ["GLOMOPAY_SENTRY_DSN": wire.dsn],
+                sessionConfiguration: wire.sessionConfiguration(),
+                config: config
+            )
+            reporter.capture(operation: "order_fetch", error: SyntheticError(), context: [:])
+            reporter.flush(timeout: deliveryTimeout)
+        }
+
+        let subscriptionTags = try XCTUnwrap(subscriptionWire.requests.first).event()["tags"] as? [String: String]
+        XCTAssertEqual(subscriptionTags?["order_id"], "sub_test_9")
+        let noIDTags = try XCTUnwrap(noIDWire.requests.first).event()["tags"] as? [String: String]
+        XCTAssertNotNil(noIDTags)
+        XCTAssertNil(noIDTags?["order_id"])
     }
 
     // MARK: Event content
@@ -272,7 +360,7 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
         XCTAssertEqual(crumb["data"] as? [String: String], ["webview_type": "main"])
     }
 
-    func testEventCarriesNoUserFieldsRequestOrStackTraceAndAsksSentryToInferTheIP() throws {
+    func testEventCarriesNoUserFieldsRequestIPOrStackTraceAndLeavesIPInferenceUnset() throws {
         let wire = SentryWire()
         let reporter = try makeReporter(wire)
 
@@ -284,14 +372,13 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
         for key in ["user", "request", "server_name", "threads", "exception", "debug_meta"] {
             XCTAssertNil(event[key], "\(key) was sent")
         }
-        // No user object at all, so no user id, email, username or name; the IP is added by
-        // Sentry from the connection, never by the SDK.
-        for fragment in ["\"email\"", "username", "\"ip_address\"", "{{auto}}"] {
+        // No user object at all, so no user id, email, username, name or IP. `infer_ip` is left
+        // unset: verified against the live project to store geo and no IP for this platform.
+        for fragment in ["\"email\"", "username", "\"ip_address\"", "{{auto}}", "infer_ip"] {
             XCTAssertFalse(request.bodyText.contains(fragment), "\(fragment) was sent")
         }
         let sdk = try XCTUnwrap(event["sdk"] as? [String: Any])
-        XCTAssertEqual(Set(sdk.keys), ["name", "version", "settings"])
-        XCTAssertEqual(sdk["settings"] as? [String: String], ["infer_ip": "auto"])
+        XCTAssertEqual(Set(sdk.keys), ["name", "version"])
         XCTAssertNil(request.request.value(forHTTPHeaderField: "Cookie"))
     }
 
@@ -307,29 +394,32 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
         // No host info dictionary in this client, so there is no app context.
         XCTAssertEqual(Set(contexts.keys), ["os", "device"])
 
+        // Each value is compared with the same fact read independently here, so the test fails if
+        // collection breaks, not only if a literal changes.
         let os = try XCTUnwrap(contexts["os"] as? [String: Any])
-        XCTAssertTrue(Set(os.keys).isSubset(of: ["name", "version", "build"]), "\(os.keys)")
-        let version = ProcessInfo.processInfo.operatingSystemVersion
-        let osVersion = try XCTUnwrap(os["version"] as? String)
-        XCTAssertTrue(osVersion.hasPrefix("\(version.majorVersion).\(version.minorVersion)"), osVersion)
-        XCTAssertNotNil(os["build"] as? String)
-
+        XCTAssertEqual(Set(os.keys), ["name", "version", "build"])
+        XCTAssertEqual(os["build"] as? String, try XCTUnwrap(Self.sysctlString("kern.osversion")))
         let device = try XCTUnwrap(contexts["device"] as? [String: Any])
-        XCTAssertTrue(Set(device.keys).isSubset(of: ["model", "family", "simulator"]), "\(device.keys)")
+        XCTAssertEqual(Set(device.keys), ["model", "family", "simulator"])
         let model = try XCTUnwrap(device["model"] as? String)
-        XCTAssertFalse(model.isEmpty)
-        #if os(iOS)
-        XCTAssertEqual(os["name"] as? String, "iOS")
-        XCTAssertEqual(device["family"] as? String, model.hasPrefix("iPad") ? "iPad" : "iOS")
+        #if targetEnvironment(simulator)
+        XCTAssertEqual(model, ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"])
+        XCTAssertEqual(device["simulator"] as? Bool, true)
         #else
+        XCTAssertEqual(model, Self.unameMachine())
+        XCTAssertEqual(device["simulator"] as? Bool, false)
+        #endif
+        #if canImport(UIKit)
+        XCTAssertEqual(os["version"] as? String, UIDevice.current.systemVersion)
+        XCTAssertEqual(os["name"] as? String, "iOS")
+        XCTAssertEqual(device["family"] as? String, UIDevice.current.model.hasPrefix("iPad") ? "iPad" : "iOS")
+        #else
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        let expected = "\(version.majorVersion).\(version.minorVersion)"
+            + (version.patchVersion > 0 ? ".\(version.patchVersion)" : "")
+        XCTAssertEqual(os["version"] as? String, expected)
         XCTAssertEqual(os["name"] as? String, "macOS")
         XCTAssertEqual(device["family"] as? String, "macOS")
-        #endif
-        #if targetEnvironment(simulator)
-        XCTAssertEqual(device["simulator"] as? Bool, true)
-        XCTAssertTrue(model.hasPrefix("iPhone") || model.hasPrefix("iPad"), model)
-        #else
-        XCTAssertEqual(device["simulator"] as? Bool, false)
         #endif
     }
 
@@ -528,6 +618,68 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
         ])
     }
 
+    // MARK: Dropped-event self-reporting
+
+    func testDroppedEventsAreReportedOnTheNextAcceptedEventAndClearedAfterIt() throws {
+        let wire = SentryWire()
+        let clock = TestClock()
+        let reporter = try makeReporter(wire, now: { clock.now })
+        wire.script(.status(503), .failure(.notConnectedToInternet), .status(429, headers: ["Retry-After": "30"]))
+
+        captureAndFlush(reporter, "server_error")   // 503: 1 dropped
+        captureAndFlush(reporter, "offline")        // carries 1, fails: 2 dropped
+        captureAndFlush(reporter, "limited")        // carries 2, 429: 3 dropped
+        captureAndFlush(reporter, "rate_limited")   // never sent: 4 dropped
+        clock.advance(by: 31)
+        captureAndFlush(reporter, "accepted")       // carries 4, 200: cleared
+        captureAndFlush(reporter, "clean")
+
+        XCTAssertEqual(try operations(on: wire), ["server_error", "offline", "limited", "accepted", "clean"])
+        XCTAssertEqual(try droppedCounts(on: wire), [nil, 1, 2, 4, nil])
+    }
+
+    func testEventsRejectedByTheInFlightBoundAreCounted() throws {
+        let wire = SentryWire()
+        wire.replyToEverything(.held)
+        let reporter = try makeReporter(wire)
+        let overflow = 3
+
+        for index in 0..<(SentryEnvelopeClient.maxInFlight + overflow) {
+            reporter.capture(operation: "burst_\(index)", error: SyntheticError(), context: [:])
+        }
+        wire.release()
+        reporter.flush(timeout: deliveryTimeout)
+        captureAndFlush(reporter, "after_burst")
+        captureAndFlush(reporter, "clean")
+
+        // The rejections may be picked up by a burst send still queued, or by the next one; either
+        // way each is reported exactly once.
+        let counts = try droppedCounts(on: wire)
+        XCTAssertEqual(counts.compactMap { $0 }.reduce(0, +), overflow)
+        XCTAssertNil(counts.last ?? nil)
+    }
+
+    // MARK: Compression
+
+    func testBodyIsGzipAndDecompressesToTheEnvelope() throws {
+        let wire = SentryWire()
+        let reporter = try makeReporter(wire)
+        for index in 0..<30 {
+            reporter.addBreadcrumb(category: "checkout", message: "step \(index) ₹ भुगतान", data: ["source": "bridge"])
+        }
+
+        reporter.capture(operation: "load_checkout", error: SyntheticError(), context: [:])
+        reporter.flush(timeout: deliveryTimeout)
+
+        let request = try XCTUnwrap(wire.requests.first)
+        XCTAssertEqual(request.request.value(forHTTPHeaderField: "Content-Encoding"), "gzip")
+        XCTAssertEqual(Array(request.wireBody.prefix(3)), [0x1F, 0x8B, 0x08])
+        XCTAssertEqual(SentryWire.gunzip(request.wireBody), request.body)
+        XCTAssertLessThan(request.wireBody.count, request.body.count / 2)
+        // The item length describes the uncompressed item, not the HTTP body.
+        XCTAssertEqual(try request.itemHeader()["length"] as? Int, request.lines[2].count)
+    }
+
     func testCaptureReturnsWithoutWaitingForTheNetwork() throws {
         let wire = SentryWire()
         wire.replyToEverything(.held)
@@ -620,6 +772,47 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
             initialFlowType: flowType,
             devMode: devMode
         )
+    }
+
+    private func reporterFromConfiguration(
+        environment: [String: String],
+        bundled: [String: String],
+        sessionConfiguration: URLSessionConfiguration = SentryEnvelopeClient.defaultSessionConfiguration(),
+        config: GlomoPayConfig = GlomoPayConfig(publicKey: "test_public_key", orderId: "order_test_123"),
+        flowType: String = "standard"
+    ) -> SDKErrorReporting {
+        let runtime = SDKTelemetryRuntime(
+            configuration: SDKRuntimeConfiguration.load(environment: environment, bundledValues: bundled),
+            sentrySessionConfiguration: sessionConfiguration
+        )
+        return SDKErrorReporterFactory.create(
+            config: config,
+            sessionID: "session-uuid",
+            flowType: flowType,
+            runtime: runtime
+        )
+    }
+
+    private func droppedCounts(on wire: SentryWire) throws -> [Int?] {
+        try wire.requests.map { request in
+            (try request.event()["extra"] as? [String: Any])?["dropped_since_last_send"] as? Int
+        }
+    }
+
+    private static func sysctlString(_ name: String) -> String? {
+        var size = 0
+        guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else { return nil }
+        var buffer = [CChar](repeating: 0, count: size)
+        guard sysctlbyname(name, &buffer, &size, nil, 0) == 0 else { return nil }
+        return String(cString: buffer)
+    }
+
+    private static func unameMachine() -> String {
+        var info = utsname()
+        uname(&info)
+        return withUnsafeBytes(of: &info.machine) { raw in
+            String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+        }
     }
 
     private func captureAndFlush(_ reporter: IsolatedSentryErrorReporter, _ operation: String) {

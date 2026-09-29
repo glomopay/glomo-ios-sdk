@@ -15,14 +15,25 @@ final class IsolatedSentryErrorReporter: SDKErrorReporting, @unchecked Sendable 
 
     private let client: SentryEnvelopeClient
     private let sessionID: String
+    private let orderID: String?
     private let devMode: Bool
     private let lock = NSLock()
     private var flowType: String
     private var breadcrumbs: [[String: Any]] = []
 
-    init(client: SentryEnvelopeClient, sessionID: String, initialFlowType: String, devMode: Bool) {
+    /// `orderID` is the checkout's order (or subscription) id, the same value analytics sends as
+    /// `order_id`. It is sent as the `order_id` tag because it is the key that joins a Sentry
+    /// event to backend logs.
+    init(
+        client: SentryEnvelopeClient,
+        sessionID: String,
+        orderID: String? = nil,
+        initialFlowType: String,
+        devMode: Bool
+    ) {
         self.client = client
         self.sessionID = sessionID
+        self.orderID = orderID.flatMap { $0.isEmpty ? nil : String($0.prefix(200)) }
         self.flowType = initialFlowType
         self.devMode = devMode
     }
@@ -49,16 +60,18 @@ final class IsolatedSentryErrorReporter: SDKErrorReporting, @unchecked Sendable 
     func capture(operation: String, error: Error, context: [String: Any?]) {
         let state: (String, [[String: Any]]) = lock.glomoWithLock { (flowType, breadcrumbs) }
         let safeOperation = AnalyticsSanitizer.text(operation, limit: 80)
+        var tags = [
+            "sdk_source": "glomo-ios-sdk",
+            "operation": safeOperation,
+            "flow_type": state.0,
+            "dev_mode": String(devMode),
+        ]
+        tags["order_id"] = orderID
         var event: [String: Any] = [
             "level": "error",
             "logger": Self.logger,
             "message": ["formatted": "\(safeOperation) failed (\(type(of: error)))"],
-            "tags": [
-                "sdk_source": "glomo-ios-sdk",
-                "operation": safeOperation,
-                "flow_type": state.0,
-                "dev_mode": String(devMode),
-            ],
+            "tags": tags,
             "extra": ["session_id": sessionID].merging(safeContext(context)) { _, new in new },
         ]
         if !state.1.isEmpty {
@@ -87,6 +100,7 @@ enum SDKErrorReporterFactory {
         return IsolatedSentryErrorReporter(
             client: client,
             sessionID: sessionID,
+            orderID: config.checkoutId,
             initialFlowType: flowType,
             devMode: SDKBuildFlags.internalBuild
         )

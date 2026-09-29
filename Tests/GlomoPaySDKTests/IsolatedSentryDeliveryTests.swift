@@ -35,6 +35,7 @@ final class IsolatedSentryDeliveryTests: XCTestCase {
                 "flow_type": "diagnostic",
                 "dev_mode": String(SDKBuildFlags.internalBuild),
                 "delivery_test": "true",
+                "order_id": runID,
             ],
             "extra": [
                 "session_id": runID,

@@ -56,6 +56,12 @@ final class SentryEnvelopeClient: @unchecked Sendable {
     private let inFlight = DispatchGroup()
     private let lock = NSLock()
     private var inFlightCount = 0
+    /// Events discarded since the last send Sentry accepted: rate limited, over the in-flight
+    /// bound, not encodable, or ending in a non-2xx response or a transport error. The next event
+    /// to go out carries it as `extra.dropped_since_last_send`, so a quiet project can be told
+    /// apart from one whose reports are being thrown away. While that event is in flight the
+    /// reported number is held back; a 2xx releases it, anything else returns it to the count.
+    private var droppedSinceLastSend = 0
 
     /// Returns nil for a blank or malformed DSN, which callers treat as "error reporting off",
     /// mirroring `SentryClient(options:)` returning nil.
@@ -106,6 +112,7 @@ final class SentryEnvelopeClient: @unchecked Sendable {
         }
         guard admitted else {
             GlomoPayLogger.error("Sentry event dropped: too many sends in flight")
+            recordDropped(1)
             completion?(.dropped)
             return
         }
@@ -125,14 +132,19 @@ final class SentryEnvelopeClient: @unchecked Sendable {
     private func send(event: [String: Any], completion: (@Sendable (SentrySendOutcome) -> Void)?) {
         guard !rateLimiter.isLimited(SentryRateLimiter.errorCategory) else {
             GlomoPayLogger.error("Sentry event dropped: rate limited")
+            recordDropped(1)
             finish(.dropped, completion)
             return
+        }
+        let reported: Int = lock.glomoWithLock {
+            defer { droppedSinceLastSend = 0 }
+            return droppedSinceLastSend
         }
         let eventID = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         let sentAt = now()
         guard
             let body = SentryEnvelope.eventEnvelope(
-                event: prepare(event, eventID: eventID, timestamp: sentAt),
+                event: prepare(event, eventID: eventID, timestamp: sentAt, droppedSinceLastSend: reported),
                 eventID: eventID,
                 dsn: dsn.value,
                 sentAt: sentAt
@@ -140,6 +152,7 @@ final class SentryEnvelopeClient: @unchecked Sendable {
             body.count <= Self.maxEnvelopeBytes
         else {
             GlomoPayLogger.error("Sentry event dropped: it could not be encoded")
+            recordDropped(reported + 1)
             finish(.dropped, completion)
             return
         }
@@ -155,7 +168,14 @@ final class SentryEnvelopeClient: @unchecked Sendable {
         request.setValue("application/x-sentry-envelope", forHTTPHeaderField: "Content-Type")
         request.setValue(dsn.authHeader(client: client), forHTTPHeaderField: "X-Sentry-Auth")
         request.setValue(client, forHTTPHeaderField: "User-Agent")
-        request.httpBody = body
+        // The item header's `length` describes the uncompressed envelope; only the HTTP body is
+        // compressed. If compression fails the envelope goes out as is.
+        if let compressed = SentryGzip.compress(body) {
+            request.setValue("gzip", forHTTPHeaderField: "Content-Encoding")
+            request.httpBody = compressed
+        } else {
+            request.httpBody = body
+        }
 
         session.dataTask(with: request) { [self] _, response, error in
             var outcome = SentrySendOutcome.failed(eventID: eventID)
@@ -168,20 +188,33 @@ final class SentryEnvelopeClient: @unchecked Sendable {
                 )
                 if !(200..<300).contains(response.statusCode) {
                     GlomoPayLogger.error("Sentry rejected an event with status \(response.statusCode)")
+                    recordDropped(reported + 1)
                 }
-            } else if let error {
+            } else {
                 GlomoPayLogger.error("Sentry event delivery failed", error: error)
+                recordDropped(reported + 1)
             }
             finish(outcome, completion)
         }.resume()
     }
 
-    /// Adds the fields `SentryClient` used to fill from its options. No `user` object and no
-    /// `request` are sent. `infer_ip: auto` asks Sentry to store the connection's public IP as
-    /// `user.ip_address` and derive geo from it, for correlation with backend and edge logs;
-    /// declared as coarse location for app functionality in `PrivacyInfo.xcprivacy`.
-    private func prepare(_ event: [String: Any], eventID: String, timestamp: Date) -> [String: Any] {
+    /// Adds the fields `SentryClient` used to fill from its options. No `user` object, no
+    /// `request` and no IP are sent, and `sdk.settings.infer_ip` is left unset: Sentry derives
+    /// approximate location (country, region, city) from the connection at ingest and does not
+    /// store the device IP. Declared as coarse location for app functionality in
+    /// `PrivacyInfo.xcprivacy`.
+    private func prepare(
+        _ event: [String: Any],
+        eventID: String,
+        timestamp: Date,
+        droppedSinceLastSend: Int
+    ) -> [String: Any] {
         var prepared = event.filter { Self.allowedCallerKeys.contains($0.key) }
+        if droppedSinceLastSend > 0 {
+            var extra = prepared["extra"] as? [String: Any] ?? [:]
+            extra["dropped_since_last_send"] = droppedSinceLastSend
+            prepared["extra"] = extra
+        }
         prepared["event_id"] = eventID
         prepared["timestamp"] = timestamp.timeIntervalSince1970
         prepared["platform"] = Self.platform
@@ -191,9 +224,12 @@ final class SentryEnvelopeClient: @unchecked Sendable {
         prepared["sdk"] = [
             "name": Self.sdkName,
             "version": Self.sdkVersion,
-            "settings": ["infer_ip": "auto"],
         ] as [String: Any]
         return prepared
+    }
+
+    private func recordDropped(_ count: Int) {
+        lock.glomoWithLock { droppedSinceLastSend += count }
     }
 
     private func finish(_ outcome: SentrySendOutcome, _ completion: (@Sendable (SentrySendOutcome) -> Void)?) {

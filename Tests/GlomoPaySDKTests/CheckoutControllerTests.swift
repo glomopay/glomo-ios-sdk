@@ -159,6 +159,70 @@ final class CheckoutControllerTests: XCTestCase {
         XCTAssertEqual(listener.journeys.first?.transactionReference, "utr_1")
     }
 
+    // MARK: - Loading teardown on a real load
+
+    /// On a successful load, only `markBridgeReady()` hides the loading view, and reaching it takes
+    /// didFinish -> evaluateJavaScript -> the page's hook -> bridge() -> script message handler ->
+    /// router -> onBridgeReady. These load a real document into the controller's real WebView, so
+    /// every hop runs. Nothing touches the network: the HTML is inline.
+
+    private let checkoutBaseURL = URL(string: "https://checkout.example/")
+
+    func testLoadedCheckoutClearsTheLoadingViewThroughBridgeReady() async throws {
+        let controller = makeController()
+        let main = try XCTUnwrap(webViews(in: controller.view).first)
+        XCTAssertFalse(controller.loadingView.isHidden)
+
+        main.loadHTMLString("<html><body>checkout</body></html>", baseURL: checkoutBaseURL)
+
+        // Without this, the spinner stays over a working page until the render watchdog reports
+        // "taking longer than expected".
+        let cleared = await waitUntil { controller.loadingView.isHidden }
+        XCTAssertTrue(cleared, "A fully loaded checkout kept its loading view")
+    }
+
+    func testLoadingViewStaysUntilTheRouterReceivesBridgeReady() async throws {
+        let controller = makeController()
+        let main = try XCTUnwrap(webViews(in: controller.view).first)
+        // The page swaps the hook for a recorder after the document-start script installs it, so
+        // didFinish's call is observable and no bridge.ready is sent.
+        let hook = GlomoPayInjectionScripts.nativeLoadReadyHook
+        main.loadHTMLString("""
+            <html><body><script>
+            window.\(hook) = function() { window.__glomoTestHookCalled__ = true; };
+            </script></body></html>
+            """, baseURL: checkoutBaseURL)
+
+        let hookCalled = await waitUntil {
+            await self.evaluateBool("window.__glomoTestHookCalled__ === true", in: main)
+        }
+        XCTAssertTrue(hookCalled, "The main WebView's didFinish never called the bridge-ready hook")
+        // Navigation has finished, but the page has not reported ready, so the spinner must stay.
+        XCTAssertFalse(controller.loadingView.isHidden)
+
+        controller.eventRouter.handle(envelope: ["type": "bridge.ready"])
+
+        XCTAssertTrue(controller.loadingView.isHidden)
+    }
+
+    /// Polls rather than sleeping a fixed time; the timeout bounds simulator scheduling.
+    private func waitUntil(timeout: TimeInterval = 30, _ condition: @MainActor () async -> Bool) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if await condition() { return true }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return await condition()
+    }
+
+    private func evaluateBool(_ script: String, in webView: WKWebView) async -> Bool {
+        await withCheckedContinuation { continuation in
+            webView.evaluateJavaScript(script) { result, _ in
+                continuation.resume(returning: (result as? Bool) ?? false)
+            }
+        }
+    }
+
     // MARK: - Flow overlay open / back / close
 
     func testWindowOpenOpensTheOverlayAndBackClosesIt() throws {

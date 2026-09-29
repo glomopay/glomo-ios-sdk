@@ -272,7 +272,9 @@ final class ContractCoverageTests: XCTestCase {
         XCTAssertTrue(GlomoPayInjectionScripts.main.contains("__glomo_ GlomoPayBridge_Injected__".replacingOccurrences(of: " ", with: "")))
         XCTAssertTrue(GlomoPayInjectionScripts.main.contains("__glomoBridgeReadySent__"))
         XCTAssertTrue(GlomoPayInjectionScripts.main.contains("window.top !== window"))
-        XCTAssertTrue(GlomoPayInjectionScripts.main.contains("__glomoSendBridgeReadyAfterNativeLoad__"))
+        XCTAssertTrue(GlomoPayInjectionScripts.main.contains("window.\(GlomoPayInjectionScripts.nativeLoadReadyHook) = sendBridgeReady"))
+        XCTAssertTrue(GlomoPayInjectionScripts.sendBridgeReadyAfterNativeLoad.contains("window.\(GlomoPayInjectionScripts.nativeLoadReadyHook)()"))
+        XCTAssertFalse(GlomoPayInjectionScripts.flow.contains(GlomoPayInjectionScripts.nativeLoadReadyHook))
         XCTAssertFalse(GlomoPayInjectionScripts.main.contains("window.addEventListener('load', sendBridgeReady"))
         XCTAssertFalse(GlomoPayInjectionScripts.main.contains("scrollIntoView"))
         XCTAssertTrue(GlomoPayInjectionScripts.credentialedRequestsFix.contains("credentials"))
@@ -282,6 +284,32 @@ final class ContractCoverageTests: XCTestCase {
         XCTAssertTrue(GlomoPayInjectionScripts.iosViewportFitFix.contains("user-scalable=no"))
         XCTAssertTrue(GlomoPayInjectionScripts.flow.contains("GlomoPayFlowBridge"))
         XCTAssertTrue(GlomoPayInjectionScripts.flow.contains("window.open"))
+    }
+
+    /// A source-text pin, like the analytics call-site test. It proves the call is written in the
+    /// main-WebView branch of `didFinish`, not that it runs; `CheckoutControllerTests` checks that
+    /// on the simulator. This one also runs under plain `swift test`, where the controller is
+    /// compiled out.
+    func testMainWebViewDidFinishStartsTheBridgeReadyRoundTrip() throws {
+        let controllerURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/GlomoPaySDK/GlomoPayCheckoutViewController.swift")
+        let source = try String(contentsOf: controllerURL, encoding: .utf8)
+
+        let didFinish = try XCTUnwrap(
+            source.components(separatedBy: "func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!)")
+                .dropFirst().first?
+                .components(separatedBy: "public func webView(").first,
+            "Unable to locate webView(_:didFinish:)"
+        )
+        // The carousel and flow WebViews return early; the call must sit after those returns.
+        let mainBranch = try XCTUnwrap(didFinish.components(separatedBy: "return").last)
+        XCTAssertTrue(
+            mainBranch.contains("evaluateJavaScript(GlomoPayInjectionScripts.sendBridgeReadyAfterNativeLoad"),
+            "The main WebView's didFinish no longer evaluates the bridge-ready hook"
+        )
     }
 
     func testBridgeRoutesWindowAndPaymentEvents() {

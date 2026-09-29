@@ -20,7 +20,8 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private var flowProgressView: UIProgressView?
     private var flowErrorView: UIView?
     private var progressView: UIProgressView!
-    private var loadingView: UIView!
+    /// Readable internally so host-based tests can check when it clears. See `eventRouter`.
+    private(set) var loadingView: UIView!
     private var loadingLabel: UILabel!
     private var errorView: UIView?
     private var currentURL: URL?
@@ -590,10 +591,9 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         analytics.track(AnalyticsEventName.navigationFinished, properties: [
             "url": AnalyticsSanitizer.navigationURL(webView.url),
         ])
-        webView.evaluateJavaScript(
-            "window.__glomoSendBridgeReadyAfterNativeLoad__ && window.__glomoSendBridgeReadyAfterNativeLoad__();",
-            completionHandler: nil
-        )
+        // Load-bearing: this starts the round-trip that ends in markBridgeReady(), the only thing
+        // that hides the loading view. CheckoutControllerTests pins it end to end.
+        webView.evaluateJavaScript(GlomoPayInjectionScripts.sendBridgeReadyAfterNativeLoad, completionHandler: nil)
     }
 
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

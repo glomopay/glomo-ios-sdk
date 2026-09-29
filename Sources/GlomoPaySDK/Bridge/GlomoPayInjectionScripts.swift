@@ -106,6 +106,17 @@ enum GlomoPayInjectionScripts {
         """
     }
 
+    /// The page-side hook `main` publishes, and the only way the main checkout emits
+    /// `bridge.ready`. It is kept in one place so the page and native sides cannot drift apart.
+    static let nativeLoadReadyHook = "__glomoSendBridgeReadyAfterNativeLoad__"
+
+    /// What the controller evaluates from `webView(_:didFinish:)` on the main WebView. It is the
+    /// only thing that leads to `markBridgeReady()`, which is the only thing that hides the
+    /// loading view on a successful load. If this call is removed, a fully loaded checkout keeps
+    /// its spinner until the render watchdog reports a timeout over a working page.
+    static let sendBridgeReadyAfterNativeLoad =
+        "window.\(nativeLoadReadyHook) && window.\(nativeLoadReadyHook)();"
+
     static func bootstrap(devMode: Bool) -> String {
         "window.__glomoDevMode__ = \(devMode ? "true" : "false");"
     }
@@ -211,7 +222,7 @@ enum GlomoPayInjectionScripts {
                 window.__glomoBridgeReadySent__ = true;
                 bridge(JSON.stringify({type: 'bridge.ready'}));
               };
-              window.__glomoSendBridgeReadyAfterNativeLoad__ = sendBridgeReady;
+              window.\(nativeLoadReadyHook) = sendBridgeReady;
               """
             : ""
         return """

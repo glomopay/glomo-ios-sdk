@@ -66,14 +66,19 @@ failures by POSTing Sentry envelopes over `URLSession` to the endpoint derived f
 DSN. It installs no crash or exception handlers, swizzles nothing, keeps no global scope, writes
 nothing to disk, and never touches a merchant-owned Sentry client. Only sanitized, allow-listed
 context is sent; events carry no user fields (no id, email, username or name) and no request.
-They set `sdk.settings.infer_ip: auto`, so Sentry stores the device's public IP as it sees the
-connection, and geo derived from it, for correlation with backend and edge logs. Mixpanel already
-receives IP-derived location, so this is not a new data category; the privacy manifest declares
-coarse location for analytics and app functionality. Events identify as `glomo-ios-sdk/<SDK version>`. For triage they carry
-a minimal `contexts` block: OS name, version and build; the device's hardware model identifier,
-family and a simulator flag; and the host app's version and build. No device name, vendor or
-advertising identifier, locale, timezone, battery, memory or view names are sent. Requests time out after 10 seconds, are never retried, and anything
-caught by a Sentry rate limit is dropped rather than queued.
+
+Sentry events record the device's public IP address and IP-derived country and city, plus OS,
+device and app context. The SDK sets `sdk.settings.infer_ip: auto`, and Sentry takes the address
+from the connection, for correlation with backend and edge logs. The privacy manifest declares
+coarse location for analytics and app functionality.
+
+Events identify as `glomo-ios-sdk/<SDK version>`. The `contexts` block carries: OS name, version
+and build; the device's hardware model identifier, family and a simulator flag; and the host
+app's version and build. No device name, vendor or advertising identifier, locale, timezone,
+battery, memory or view names are sent.
+
+Requests time out after 10 seconds, are never retried, and anything caught by a Sentry rate
+limit is dropped rather than queued.
 
 Merchants can use any Sentry version, or none, alongside this SDK.
 

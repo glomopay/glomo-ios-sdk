@@ -139,11 +139,10 @@ All notable changes to the GlomoPay iOS SDK are documented here.
   Sentry-side filters, alerts and dashboards matching `sdk.name:sentry.cocoa` must be updated.
   `contexts` is reduced to `os` (name, version, build), `device` (hardware model, family,
   simulator) and `app` (host version and build); sentry-cocoa's battery, memory, orientation,
-  thermal, locale, timezone and view-controller-name fields are no longer sent. Events set
-  `infer_ip: auto`, so Sentry stores the device's public IP as it sees the connection and
-  IP-derived geo (sentry-cocoa sent `never`); no other user field is sent. Mixpanel already
-  receives IP-derived location, so this is not a new data category, and the privacy manifest's
-  coarse-location entry now also lists the app-functionality purpose.
+  thermal, locale, timezone and view-controller-name fields are no longer sent. Sentry events
+  now record the device's public IP address and IP-derived country and city (`infer_ip: auto`;
+  sentry-cocoa sent `never`), plus OS, device and app context. No other user field is sent. The
+  privacy manifest's coarse-location entry now also lists the app-functionality purpose.
 - `CheckoutStatus`, which was declared, referenced nowhere, and carried the member set that
   reported a submitted bank transfer as `paymentSuccessful`.
 - `TerminationSource.backButton`, which has no meaning on iOS: the escapes are the navigation bar's

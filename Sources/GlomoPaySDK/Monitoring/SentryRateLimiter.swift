@@ -30,9 +30,10 @@ final class SentryRateLimiter: @unchecked Sendable {
     func update(statusCode: Int, rateLimits: String?, retryAfter: String?) {
         let current = now()
         lock.glomoWithLock {
-            if let rateLimits, !rateLimits.trimmingCharacters(in: .whitespaces).isEmpty {
-                applyRateLimits(rateLimits, at: current)
-            } else if statusCode == 429 {
+            // A header that parses to no quota (for example ":error:organization") must not
+            // swallow the 429: fall through to Retry-After, then the default back-off.
+            let applied = rateLimits.map { applyRateLimits($0, at: current) } ?? 0
+            if applied == 0, statusCode == 429 {
                 block(Self.allCategories, for: backoff(retryAfter: retryAfter, at: current), at: current)
             }
         }
@@ -53,20 +54,28 @@ final class SentryRateLimiter: @unchecked Sendable {
 
     /// Quotas are `retry_after:categories:scope[:reason[:namespaces]]`, comma separated, with
     /// categories separated by `;`. An empty category list means every category.
-    private func applyRateLimits(_ header: String, at date: Date) {
+    /// Returns how many quotas were applied.
+    @discardableResult
+    private func applyRateLimits(_ header: String, at date: Date) -> Int {
+        var applied = 0
         for quota in header.split(separator: ",") {
             let parts = quota.split(separator: ":", omittingEmptySubsequences: false)
             guard let first = parts.first, let seconds = Self.seconds(String(first)) else { continue }
             let categories = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : ""
             if categories.isEmpty {
                 block(Self.allCategories, for: seconds, at: date)
+                applied += 1
                 continue
             }
             for category in categories.split(separator: ";") {
                 let name = category.trimmingCharacters(in: .whitespaces).lowercased()
-                if !name.isEmpty { block(name, for: seconds, at: date) }
+                if !name.isEmpty {
+                    block(name, for: seconds, at: date)
+                    applied += 1
+                }
             }
         }
+        return applied
     }
 
     private func backoff(retryAfter: String?, at date: Date) -> TimeInterval {

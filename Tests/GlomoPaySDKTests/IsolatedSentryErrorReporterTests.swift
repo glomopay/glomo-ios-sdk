@@ -555,6 +555,35 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
         XCTAssertEqual(try operations(on: wire), ["limited", "delivered"])
     }
 
+    func testA429WhoseRateLimitHeaderParsesToNothingFallsBackToRetryAfter() throws {
+        let wire = SentryWire()
+        let clock = TestClock()
+        let reporter = try makeReporter(wire, now: { clock.now })
+        wire.script(.status(429, headers: ["X-Sentry-Rate-Limits": ":error:organization", "Retry-After": "30"]))
+
+        captureAndFlush(reporter, "limited")
+        captureAndFlush(reporter, "dropped")
+        clock.advance(by: 31)
+        captureAndFlush(reporter, "delivered")
+
+        XCTAssertEqual(try operations(on: wire), ["limited", "delivered"])
+    }
+
+    func testA429WhoseRateLimitHeaderParsesToNothingAndNoRetryAfterUsesTheDefaultBackoff() throws {
+        let wire = SentryWire()
+        let clock = TestClock()
+        let reporter = try makeReporter(wire, now: { clock.now })
+        wire.script(.status(429, headers: ["X-Sentry-Rate-Limits": ":error:organization"]))
+
+        captureAndFlush(reporter, "limited")
+        clock.advance(by: 59)
+        captureAndFlush(reporter, "still_limited")
+        clock.advance(by: 2)
+        captureAndFlush(reporter, "delivered")
+
+        XCTAssertEqual(try operations(on: wire), ["limited", "delivered"])
+    }
+
     func testRateLimitOnAnotherCategoryDoesNotDropEvents() throws {
         let wire = SentryWire()
         let reporter = try makeReporter(wire)
@@ -693,35 +722,100 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 0.5)
     }
 
-    func testFlushWaitsForAnInFlightSend() throws {
+    func testFlushWaitsForAnInFlightSendAndReturnsOnceItIsAnswered() throws {
         let wire = SentryWire()
         wire.replyToEverything(.held)
-        let reporter = try makeReporter(wire)
+        let client = try wire.makeClient()
+        let recorder = OutcomeRecorder()
 
-        reporter.capture(operation: "load_checkout", error: SyntheticError(), context: [:])
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { wire.release() }
+        client.capture(event: ["level": "error"]) { recorder.append($0) }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { wire.release() }
         let started = Date()
-        reporter.flush(timeout: deliveryTimeout)
+        client.flush(timeout: 5)
         let elapsed = Date().timeIntervalSince(started)
 
-        XCTAssertGreaterThanOrEqual(elapsed, 0.3)
-        XCTAssertLessThan(elapsed, deliveryTimeout)
-        XCTAssertEqual(wire.requests.count, 1)
+        // It waited for the answer rather than returning early, and returned soon after it.
+        let eventID = try XCTUnwrap(wire.requests.first?.envelopeHeader()["event_id"] as? String)
+        XCTAssertEqual(recorder.outcomes, [.responded(eventID: eventID, statusCode: 200)])
+        XCTAssertGreaterThanOrEqual(elapsed, 0.2)
+        XCTAssertLessThan(elapsed, 2)
     }
 
-    func testFlushReturnsWithinItsTimeoutWhenASendHangs() throws {
+    func testFlushReturnsAtItsTimeoutWhileASendIsStillInFlight() throws {
         let wire = SentryWire()
         wire.replyToEverything(.held)
-        let reporter = try makeReporter(wire)
-        defer { wire.release() }
+        let client = try wire.makeClient()
+        let recorder = OutcomeRecorder()
 
-        reporter.capture(operation: "load_checkout", error: SyntheticError(), context: [:])
+        client.capture(event: ["level": "error"]) { recorder.append($0) }
         let started = Date()
-        reporter.flush(timeout: 0.5)
+        client.flush(timeout: 0.3)
         let elapsed = Date().timeIntervalSince(started)
 
-        XCTAssertGreaterThanOrEqual(elapsed, 0.4)
-        XCTAssertLessThan(elapsed, 3)
+        // It returned because the timeout expired: the send had reached the wire and was still
+        // unanswered.
+        XCTAssertEqual(wire.requests.count, 1)
+        XCTAssertEqual(recorder.outcomes, [])
+        XCTAssertGreaterThanOrEqual(elapsed, 0.25)
+        XCTAssertLessThan(elapsed, 2)
+
+        wire.release()
+        client.flush(timeout: deliveryTimeout)
+        XCTAssertEqual(recorder.outcomes.count, 1)
+    }
+
+    func testARateLimitedOrOverBoundCaptureBuildsNothingButIsCounted() throws {
+        let wire = SentryWire()
+        let clock = TestClock()
+        let client = try wire.makeClient(now: { clock.now })
+        let builds = BuildRecorder()
+        wire.script(.status(429, headers: ["Retry-After": "30"]))
+
+        client.capture { builds.record(); return ["level": "error"] }
+        client.flush(timeout: deliveryTimeout)
+        XCTAssertEqual(builds.count, 1)
+        XCTAssertEqual(builds.onMainThread, [false], "the event was built on the caller's thread")
+
+        let dropped = expectation(description: "dropped")
+        client.capture(completion: { outcome in
+            XCTAssertEqual(outcome, .dropped)
+            dropped.fulfill()
+        }) {
+            builds.record()
+            return ["level": "error"]
+        }
+        wait(for: [dropped], timeout: deliveryTimeout)
+        XCTAssertEqual(builds.count, 1, "a rate-limited capture must not build its event")
+
+        clock.advance(by: 31)
+        client.capture(event: ["level": "error"])
+        client.flush(timeout: deliveryTimeout)
+        let extras = try wire.requests.map { (try $0.event()["extra"] as? [String: Any])?["dropped_since_last_send"] as? Int }
+        // The 429 itself and the rate-limited capture.
+        XCTAssertEqual(extras, [nil, 2])
+    }
+
+    func testCaptureOverTheInFlightBoundBuildsNothing() throws {
+        let wire = SentryWire()
+        wire.replyToEverything(.held)
+        let client = try wire.makeClient()
+        let builds = BuildRecorder()
+        defer { wire.release() }
+
+        for _ in 0..<SentryEnvelopeClient.maxInFlight {
+            client.capture(event: ["level": "error"])
+        }
+        let dropped = expectation(description: "dropped")
+        client.capture(completion: { outcome in
+            XCTAssertEqual(outcome, .dropped)
+            dropped.fulfill()
+        }) {
+            builds.record()
+            return ["level": "error"]
+        }
+        wait(for: [dropped], timeout: deliveryTimeout)
+
+        XCTAssertEqual(builds.count, 0)
     }
 
     func testEventsBeyondTheInFlightBoundAreDroppedNotQueued() throws {
@@ -829,6 +923,19 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
 }
 
 private struct SyntheticError: Error {}
+
+private final class BuildRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var threads: [Bool] = []
+
+    var count: Int { lock.glomoWithLock { threads.count } }
+    var onMainThread: [Bool] { lock.glomoWithLock { threads } }
+
+    func record() {
+        let isMain = Thread.isMainThread
+        lock.glomoWithLock { threads.append(isMain) }
+    }
+}
 
 private final class OutcomeRecorder: @unchecked Sendable {
     private let lock = NSLock()

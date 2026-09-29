@@ -101,10 +101,24 @@ final class SentryEnvelopeClient: @unchecked Sendable {
         return configuration
     }
 
-    /// Returns immediately. Encoding and delivery happen on a private utility queue.
-    /// `completion`, if given, runs once with the outcome before `flush(timeout:)` can observe the
-    /// send as finished. Production callers pass none; it exists for delivery verification.
-    func capture(event: [String: Any], completion: (@Sendable (SentrySendOutcome) -> Void)? = nil) {
+    /// Returns immediately. The drop decisions (rate limit, in-flight bound) are made first, on
+    /// the caller's thread and without building anything; `build` then runs on the client's
+    /// utility queue, so event construction and sanitisation never cost the caller's (often the
+    /// main) thread, and a dropped event is never built.
+    ///
+    /// `completion` is opt-in and defaults to nil: it runs once with the outcome before
+    /// `flush(timeout:)` can observe the send as finished. Production callers pass none; it exists
+    /// for delivery verification and tests.
+    func capture(
+        completion: (@Sendable (SentrySendOutcome) -> Void)? = nil,
+        _ build: @escaping () -> [String: Any]
+    ) {
+        if rateLimiter.isLimited(SentryRateLimiter.errorCategory) {
+            GlomoPayLogger.error("Sentry event dropped: rate limited")
+            recordDropped(1)
+            completion?(.dropped)
+            return
+        }
         let admitted: Bool = lock.glomoWithLock {
             guard inFlightCount < Self.maxInFlight else { return false }
             inFlightCount += 1
@@ -118,8 +132,13 @@ final class SentryEnvelopeClient: @unchecked Sendable {
         }
         inFlight.enter()
         queue.async { [self] in
-            send(event: event, completion: completion)
+            send(build: build, completion: completion)
         }
+    }
+
+    /// Convenience for an event that is already built.
+    func capture(event: [String: Any], completion: (@Sendable (SentrySendOutcome) -> Void)? = nil) {
+        capture(completion: completion) { event }
     }
 
     /// Waits up to `timeout` for in-flight sends to finish. Blocks the calling thread, so callers
@@ -129,7 +148,8 @@ final class SentryEnvelopeClient: @unchecked Sendable {
         _ = inFlight.wait(timeout: .now() + seconds)
     }
 
-    private func send(event: [String: Any], completion: (@Sendable (SentrySendOutcome) -> Void)?) {
+    private func send(build: () -> [String: Any], completion: (@Sendable (SentrySendOutcome) -> Void)?) {
+        // Checked again: a limit can arrive from another send while this one was queued.
         guard !rateLimiter.isLimited(SentryRateLimiter.errorCategory) else {
             GlomoPayLogger.error("Sentry event dropped: rate limited")
             recordDropped(1)
@@ -144,7 +164,7 @@ final class SentryEnvelopeClient: @unchecked Sendable {
         let sentAt = now()
         guard
             let body = SentryEnvelope.eventEnvelope(
-                event: prepare(event, eventID: eventID, timestamp: sentAt, droppedSinceLastSend: reported),
+                event: prepare(build(), eventID: eventID, timestamp: sentAt, droppedSinceLastSend: reported),
                 eventID: eventID,
                 dsn: dsn.value,
                 sentAt: sentAt

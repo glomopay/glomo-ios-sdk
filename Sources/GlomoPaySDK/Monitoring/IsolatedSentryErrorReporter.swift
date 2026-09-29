@@ -57,27 +57,43 @@ final class IsolatedSentryErrorReporter: SDKErrorReporting, @unchecked Sendable 
         }
     }
 
+    /// Snapshots the mutable state (flow type, breadcrumbs) now, so the event reflects the moment
+    /// of the failure, and leaves sanitisation and building to the client's queue, which skips
+    /// both entirely when the event is going to be dropped.
     func capture(operation: String, error: Error, context: [String: Any?]) {
         let state: (String, [[String: Any]]) = lock.glomoWithLock { (flowType, breadcrumbs) }
+        let errorType = String(describing: type(of: error))
+        client.capture { [self] in
+            buildEvent(operation: operation, errorType: errorType, context: context, flowType: state.0, breadcrumbs: state.1)
+        }
+    }
+
+    private func buildEvent(
+        operation: String,
+        errorType: String,
+        context: [String: Any?],
+        flowType: String,
+        breadcrumbs: [[String: Any]]
+    ) -> [String: Any] {
         let safeOperation = AnalyticsSanitizer.text(operation, limit: 80)
         var tags = [
             "sdk_source": "glomo-ios-sdk",
             "operation": safeOperation,
-            "flow_type": state.0,
+            "flow_type": flowType,
             "dev_mode": String(devMode),
         ]
         tags["order_id"] = orderID
         var event: [String: Any] = [
             "level": "error",
             "logger": Self.logger,
-            "message": ["formatted": "\(safeOperation) failed (\(type(of: error)))"],
+            "message": ["formatted": "\(safeOperation) failed (\(errorType))"],
             "tags": tags,
             "extra": ["session_id": sessionID].merging(safeContext(context)) { _, new in new },
         ]
-        if !state.1.isEmpty {
-            event["breadcrumbs"] = ["values": state.1]
+        if !breadcrumbs.isEmpty {
+            event["breadcrumbs"] = ["values": breadcrumbs]
         }
-        client.capture(event: event)
+        return event
     }
 
     func flush(timeout: TimeInterval) {

@@ -360,7 +360,7 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
         XCTAssertEqual(crumb["data"] as? [String: String], ["webview_type": "main"])
     }
 
-    func testEventCarriesNoUserFieldsRequestIPOrStackTraceAndLeavesIPInferenceUnset() throws {
+    func testEventCarriesNoUserFieldsRequestIPOrStackTraceAndOptsOutOfIPStorage() throws {
         let wire = SentryWire()
         let reporter = try makeReporter(wire)
 
@@ -372,13 +372,14 @@ final class IsolatedSentryErrorReporterTests: XCTestCase {
         for key in ["user", "request", "server_name", "threads", "exception", "debug_meta"] {
             XCTAssertNil(event[key], "\(key) was sent")
         }
-        // No user object at all, so no user id, email, username, name or IP. `infer_ip` is left
-        // unset: verified against the live project to store geo and no IP for this platform.
-        for fragment in ["\"email\"", "username", "\"ip_address\"", "{{auto}}", "infer_ip"] {
+        // No user object at all, so no user id, email, username, name or IP. `infer_ip` must be
+        // `never`: left unset, Relay stored the connection IP for the Cocoa platform.
+        for fragment in ["\"email\"", "username", "\"ip_address\"", "{{auto}}"] {
             XCTAssertFalse(request.bodyText.contains(fragment), "\(fragment) was sent")
         }
         let sdk = try XCTUnwrap(event["sdk"] as? [String: Any])
-        XCTAssertEqual(Set(sdk.keys), ["name", "version"])
+        XCTAssertEqual(Set(sdk.keys), ["name", "version", "settings"])
+        XCTAssertEqual(sdk["settings"] as? [String: String], ["infer_ip": "never"])
         XCTAssertNil(request.request.value(forHTTPHeaderField: "Cookie"))
     }
 

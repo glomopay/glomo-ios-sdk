@@ -145,8 +145,8 @@ All notable changes to the GlomoPay iOS SDK are documented here.
   `contexts` is reduced to `os` (name, version, build), `device` (hardware model, family,
   simulator) and `app` (host version and build); sentry-cocoa's battery, memory, orientation,
   thermal, locale, timezone and view-controller-name fields are no longer sent. The SDK sends no
-  IP and no user object; Sentry derives approximate location (country, region, city) at ingest
-  and does not store the device IP. The privacy manifest's coarse-location entry now also lists
+  IP and no user object, and sets `infer_ip: never`; Sentry derives approximate location
+  (country, region, city) at ingest and does not store the device IP. The privacy manifest's coarse-location entry now also lists
   the app-functionality purpose. Events are tagged `order_id` with the checkout's order (or
   subscription) id, the join key to backend logs. Discarded events (rate limited, over the
   in-flight bound, 5xx or transport failure) are counted and reported on the next event that

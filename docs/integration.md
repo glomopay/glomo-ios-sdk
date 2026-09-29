@@ -67,8 +67,9 @@ DSN. It installs no crash or exception handlers, swizzles nothing, keeps no glob
 nothing to disk, and never touches a merchant-owned Sentry client. Only sanitized, allow-listed
 context is sent; events carry no user fields (no id, email, username or name) and no request.
 
-The SDK sends no IP address. Sentry derives approximate location (country, region, city) from
-the connection at ingest and does not store the device IP. The privacy manifest declares coarse
+The SDK sends no IP address and sets `sdk.settings.infer_ip: never`. Sentry derives approximate
+location (country, region, city) at ingest and does not store the device IP. The setting is
+required: left unset, Sentry treats the Cocoa platform as `auto` and stores the connection IP. The privacy manifest declares coarse
 location for analytics and app functionality.
 
 Each event is tagged `order_id` with the checkout's order id (or subscription id), the same value

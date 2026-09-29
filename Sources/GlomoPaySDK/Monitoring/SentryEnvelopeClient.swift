@@ -199,10 +199,11 @@ final class SentryEnvelopeClient: @unchecked Sendable {
     }
 
     /// Adds the fields `SentryClient` used to fill from its options. No `user` object, no
-    /// `request` and no IP are sent, and `sdk.settings.infer_ip` is left unset: Sentry derives
-    /// approximate location (country, region, city) from the connection at ingest and does not
-    /// store the device IP. Declared as coarse location for app functionality in
-    /// `PrivacyInfo.xcprivacy`.
+    /// `request` and no IP are sent. `infer_ip: never` is required, not a default: for the Cocoa
+    /// platform Relay treats an unset value as `auto` and stores the connection IP, which a live
+    /// event confirmed. With `never`, Sentry derives approximate location (country, region, city)
+    /// at ingest and does not store the device IP. Declared as coarse location for app
+    /// functionality in `PrivacyInfo.xcprivacy`.
     private func prepare(
         _ event: [String: Any],
         eventID: String,
@@ -224,6 +225,7 @@ final class SentryEnvelopeClient: @unchecked Sendable {
         prepared["sdk"] = [
             "name": Self.sdkName,
             "version": Self.sdkVersion,
+            "settings": ["infer_ip": "never"],
         ] as [String: Any]
         return prepared
     }

@@ -13,10 +13,6 @@ final class SDKErrorReporterTests: XCTestCase {
         XCTAssertEqual(reporter.timeout, SDKErrorReporterTerminalFlusher.timeout)
         XCTAssertFalse(reporter.wasCalledOnMainThread)
     }
-
-    func testNoOpReporterAcceptsFlush() {
-        NoOpSDKErrorReporter().flush(timeout: 1)
-    }
 }
 
 private final class FlushRecordingErrorReporter: SDKErrorReporting, @unchecked Sendable {

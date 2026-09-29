@@ -128,6 +128,32 @@ All notable changes to the GlomoPay iOS SDK are documented here.
 
 ### Removed
 
+- The Sentry SDK dependency (`sentry-cocoa`, previously pinned `exact: 9.19.1` in `Package.swift`
+  and `Sentry/Core = 9.19.1` in the podspec). SwiftPM resolves one version per package for the
+  whole app, so any merchant on a different Sentry version could not install this SDK at all.
+  SDK error reporting now sends Sentry envelopes over `URLSession` with the same message, tags,
+  extras, breadcrumbs, allowlist and sanitisation. No public API change. The Sentry dependency
+  is gone; the macOS 12 floor, raised on this release line to match Sentry 9.29+, stays, since
+  macOS only hosts `swift test`. Sentry issue grouping may change for new events, which no longer carry a raw
+  capture-site stack trace (unsymbolicated without the merchant's dSYMs) or an offline retry
+  spool. Events now identify as `glomo-ios-sdk/<SDK version>` (`sdk.name`, `sentry_client`,
+  `User-Agent`) instead of `sentry.cocoa/9.19.1`, matching Android's `glomo-android-sdk`, so
+  Sentry-side filters, alerts and dashboards matching `sdk.name:sentry.cocoa` must be updated.
+  `release` is now `glomo-ios-sdk@<SDK version>` and `environment` is `glomo-ios-sdk`, matching
+  Android, and `dist` is no longer sent: Sentry releases are now per SDK version instead of per
+  host app version (previously the host's `bundleId@version+build`, with `environment`
+  `production`). The host bundle id is no longer sent anywhere; the host app's version and build
+  are only in `contexts.app`.
+  `contexts` is reduced to `os` (name, version, build), `device` (hardware model, family,
+  simulator) and `app` (host version and build); sentry-cocoa's battery, memory, orientation,
+  thermal, locale, timezone and view-controller-name fields are no longer sent. The SDK sends no
+  IP and no user object, and sets `infer_ip: never`; Sentry derives approximate location
+  (country, region, city) at ingest and does not store the device IP. The privacy manifest's coarse-location entry now also lists
+  the app-functionality purpose. Events are tagged `order_id` with the checkout's order (or
+  subscription) id, the join key to backend logs. Discarded events (rate limited, over the
+  in-flight bound, 5xx or transport failure) are counted and reported on the next event that
+  goes out as `extra.dropped_since_last_send`. The HTTP body is gzip-compressed, as
+  sentry-cocoa's was.
 - `CheckoutStatus`, which was declared, referenced nowhere, and carried the member set that
   reported a submitted bank transfer as `paymentSuccessful`.
 - `TerminationSource.backButton`, which has no meaning on iOS: the escapes are the navigation bar's

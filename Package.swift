@@ -14,22 +14,15 @@ let package = Package(
     defaultLocalization: "en",
     platforms: [
         .iOS(.v16),
-        // macOS exists only so `swift test` can run on a Mac host. It must stay at or above the
-        // newest Sentry 9.x floor (macOS 12 as of 9.29), or resolution fails for the range below.
+        // macOS exists only so `swift test` can run on a Mac host.
         .macOS(.v12),
     ],
     products: [
         .library(name: "glomo-ios-sdk", targets: ["GlomoPaySDK"]),
     ],
-    dependencies: [
-        .package(url: "https://github.com/getsentry/sentry-cocoa.git", "9.19.1"..<"10.0.0"),
-    ],
     targets: [
         .target(
             name: "GlomoPaySDK",
-            dependencies: [
-                .product(name: "Sentry", package: "sentry-cocoa"),
-            ],
             path: "Sources/GlomoPaySDK",
             resources: [
                 .process("Resources/PrivacyInfo.xcprivacy"),

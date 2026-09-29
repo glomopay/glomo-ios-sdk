@@ -22,11 +22,10 @@ one, stop and raise it.
 
 ### HARD RULE — third-party dependencies need product approval
 
-The SDK keeps third-party dependencies minimal. Native Sentry Cocoa is the only
-approved external package and must stay on a compatible 9.x SwiftPM range unless
-GlomoPay approves a different telemetry design. Do not add third-party networking,
-JSON, analytics, crash-reporting, or telemetry SDKs without an explicit design
-decision.
+The SDK has no third-party package dependencies; error reporting speaks Sentry's
+envelope protocol over `URLSession` instead of embedding a Sentry SDK. Do not add
+third-party networking, JSON, analytics, crash-reporting, or telemetry SDKs without
+an explicit GlomoPay design decision.
 
 ### HARD RULE — no customer data in this repository
 

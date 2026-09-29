@@ -50,7 +50,7 @@ The package product is named `glomo-ios-sdk`. The Swift module remains
 - Isolated `Security` layer for jailbreak/debugger checks with Flutter/Kotlin strict-mode policy
 - Internal-only developer logging, gated on an SDK build-time flag with no merchant-facing switch
 - Direct Mixpanel REST analytics with the shared native event contract, PII filtering, and bank URL sanitization
-- Isolated Sentry error reporting for SDK/analytics failures without global `SentrySDK.start` initialization
+- Isolated Sentry error reporting for SDK/analytics failures over plain `URLSession`, with no Sentry SDK dependency
 - Bundled privacy manifest covering analytics and SDK diagnostics
 - Document-start JavaScript bridge for checkout, bank overlays, carousel availability, and payment events
 - XCTest coverage for validation, URL generation, API errors, payloads, bridge events, security policy, and iOS WebView safeguards
@@ -198,9 +198,9 @@ no-op implementations and never block checkout.
 
 Mixpanel uses the REST `/track` endpoint rather than the native Mixpanel SDK. Analytics
 requests are asynchronous, use a 10-second timeout, and are never retried during checkout.
-Delivery failures are captured by the isolated SDK-owned Sentry client. The SDK does not
-call global Sentry initialization, enable Session Replay, or enable automatic performance,
-network, session, or app-wide crash instrumentation.
+Delivery failures are captured by the isolated SDK-owned Sentry client, which sends Sentry
+envelopes over `URLSession` rather than embedding a Sentry SDK. It installs no global handlers
+and no session, performance, network, or app-wide crash instrumentation.
 
 See [Analytics and monitoring integration](docs/integration.md) for the event identity,
 privacy boundaries, dependency compatibility, and release-build requirements.

@@ -127,6 +127,14 @@ All notable changes to the GlomoPay iOS SDK are documented here.
 
 ### Removed
 
+- The Sentry SDK dependency (`sentry-cocoa`, previously pinned `exact: 9.19.1` in `Package.swift`
+  and `Sentry/Core = 9.19.1` in the podspec). SwiftPM resolves one version per package for the
+  whole app, so any merchant on a different Sentry version could not install this SDK at all.
+  SDK error reporting now sends Sentry envelopes over `URLSession` with the same message, tags,
+  extras, breadcrumbs, allowlist and sanitisation. No public API change, and the macOS floor is
+  unaffected. Sentry issue grouping may change for new events, which no longer carry a raw
+  capture-site stack trace (unsymbolicated without the merchant's dSYMs), device/app/culture
+  contexts, or an offline retry spool.
 - `CheckoutStatus`, which was declared, referenced nowhere, and carried the member set that
   reported a submitted bank transfer as `paymentSuccessful`.
 - `TerminationSource.backButton`, which has no meaning on iOS: the escapes are the navigation bar's

@@ -1,6 +1,8 @@
 import XCTest
 @testable import GlomoPaySDK
 
+/// Opt-in, skipped by default: sends one real synthetic event to the configured Sentry project.
+/// Point `GLOMOPAY_SENTRY_DSN` at a non-production project when verifying a change.
 final class IsolatedSentryDeliveryTests: XCTestCase {
     func testManualSDKErrorDelivery() throws {
         let environment = ProcessInfo.processInfo.environment
@@ -14,8 +16,12 @@ final class IsolatedSentryDeliveryTests: XCTestCase {
             configuration.sentryDSN,
             "The SDK-owned Sentry DSN is not configured."
         )
+        let client = try XCTUnwrap(
+            SentryEnvelopeClient(dsn: dsn),
+            "The SDK-owned Sentry DSN is blank or malformed."
+        )
         let reporter = IsolatedSentryErrorReporter(
-            client: IsolatedSentryClient(dsn: dsn),
+            client: client,
             sessionID: UUID().uuidString,
             initialFlowType: "diagnostic",
             devMode: SDKBuildFlags.internalBuild

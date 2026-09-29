@@ -31,5 +31,4 @@ Pod::Spec.new do |spec|
   # }
 
   spec.frameworks = "Foundation", "UIKit", "WebKit"
-  spec.dependency "Sentry/Core", "= 9.19.1"
 end

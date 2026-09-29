@@ -61,15 +61,15 @@ network monitoring occurs.
 
 ## Isolated Sentry client
 
-The SDK pins Sentry Cocoa `9.19.1` for both SwiftPM and CocoaPods so the two supported integration
-channels compile and run against the same dependency API. It creates a
-private `SentryClient` and does not invoke `SentrySDK.start`, mutate
-the global scope, or reuse a merchant-owned client. Session Replay, automatic sessions,
-performance tracing, network tracking, and swizzling are disabled. Only explicitly captured
-SDK and analytics-delivery failures are submitted with sanitized, allow-listed context.
+The SDK has no Sentry SDK dependency. It reports explicitly captured SDK and analytics-delivery
+failures by POSTing Sentry envelopes over `URLSession` to the endpoint derived from the bundled
+DSN. It installs no crash or exception handlers, swizzles nothing, keeps no global scope, writes
+nothing to disk, and never touches a merchant-owned Sentry client. Only sanitized, allow-listed
+context is sent; events carry no user, no request, and `infer_ip: never`, so Sentry does not
+attach the connection IP. Requests time out after 10 seconds, are never retried, and anything
+caught by a Sentry rate limit is dropped rather than queued.
 
-Merchants already using an incompatible Sentry version must align their dependency resolution
-with Sentry Cocoa `9.19.1` before integrating this SDK.
+Merchants can use any Sentry version, or none, alongside this SDK.
 
 ### Manual Sentry delivery verification
 
@@ -80,12 +80,14 @@ GLOMOPAY_RUN_SENTRY_DELIVERY_TEST=1 \
 swift test --filter IsolatedSentryDeliveryTests/testManualSDKErrorDelivery
 ```
 
-The test is skipped during normal test runs and does not initialize global Sentry. Confirm the
-`manual_sentry_delivery_test` event in the GlomoPay iOS SDK Sentry project after it completes.
+The test is skipped during normal test runs and does not initialize global Sentry. It sends to
+the bundled DSN unless `GLOMOPAY_SENTRY_DSN` overrides it; point it at a non-production project
+when verifying a change. Confirm the `manual_sentry_delivery_test` event in that project after it
+completes.
 
 ## Symbols
 
-Because the SDK is source-distributed, its release symbols are part of the merchant app's
-dSYM. Complete Sentry symbolication therefore requires the final application dSYM to be
-uploaded to the GlomoPay Sentry project from the release build or CI pipeline. No auth token
-or symbol-upload credential is embedded in the SDK.
+Error events carry no stack trace, so no dSYM upload is needed for SDK error reporting. From a
+merchant's release build the frames would be unsymbolicated addresses in the merchant's binary,
+and GlomoPay never receives the merchant's dSYMs. The event message names the failed operation
+and the error type instead. No auth token or symbol-upload credential is embedded in the SDK.

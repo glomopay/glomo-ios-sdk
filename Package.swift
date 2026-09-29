@@ -19,15 +19,9 @@ let package = Package(
     products: [
         .library(name: "glomo-ios-sdk", targets: ["GlomoPaySDK"]),
     ],
-    dependencies: [
-        .package(url: "https://github.com/getsentry/sentry-cocoa.git", exact: "9.19.1"),
-    ],
     targets: [
         .target(
             name: "GlomoPaySDK",
-            dependencies: [
-                .product(name: "Sentry", package: "sentry-cocoa"),
-            ],
             path: "Sources/GlomoPaySDK",
             resources: [
                 .process("Resources/PrivacyInfo.xcprivacy"),

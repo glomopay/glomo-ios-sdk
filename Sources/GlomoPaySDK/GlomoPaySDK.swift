@@ -59,10 +59,8 @@ public final class GlomoPaySDK {
             handle.attach(checkout)
             let navigationController = UINavigationController(rootViewController: checkout)
             navigationController.modalPresentationStyle = .pageSheet
-            if #available(iOS 15.0, *) {
-                navigationController.sheetPresentationController?.prefersGrabberVisible = true
-                navigationController.sheetPresentationController?.prefersScrollingExpandsWhenScrolledToEdge = false
-            }
+            navigationController.sheetPresentationController?.prefersGrabberVisible = true
+            navigationController.sheetPresentationController?.prefersScrollingExpandsWhenScrolledToEdge = false
             presenter.present(navigationController, animated: animated, completion: completion)
         }
         return handle

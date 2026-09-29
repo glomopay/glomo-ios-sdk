@@ -13,14 +13,14 @@ let package = Package(
     name: "glomo-ios-sdk",
     defaultLocalization: "en",
     platforms: [
-        .iOS(.v15),
+        .iOS(.v16),
         .macOS(.v10_15),
     ],
     products: [
         .library(name: "glomo-ios-sdk", targets: ["GlomoPaySDK"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/getsentry/sentry-cocoa.git", exact: "9.19.1"),
+        .package(url: "https://github.com/getsentry/sentry-cocoa.git", "9.19.1"..<"10.0.0"),
     ],
     targets: [
         .target(

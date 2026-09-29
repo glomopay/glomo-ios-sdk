@@ -4,8 +4,8 @@
 
 The SDK reads its Mixpanel project token and Sentry DSN from the SDK-owned
 `GlomoPayTelemetryConfiguration.plist` resource. Merchant applications do not configure
-these values in their `Info.plist`, build settings, or CI. The resource is packaged by both
-SwiftPM and CocoaPods.
+these values in their `Info.plist`, build settings, or CI. The resource is packaged by Swift
+Package Manager.
 
 Release maintainers generate the resource with `scripts/generate-telemetry-config.sh` using
 shell environment variables before creating the release tag. Local SDK development can
@@ -61,15 +61,24 @@ network monitoring occurs.
 
 ## Isolated Sentry client
 
-The SDK pins Sentry Cocoa `9.19.1` for both SwiftPM and CocoaPods so the two supported integration
-channels compile and run against the same dependency API. It creates a
+The SDK depends on native Sentry Cocoa through Swift Package Manager with the range
+`9.19.1..<10.0.0`. The lower bound is a compatibility floor, not a forced downgrade: SwiftPM can
+still resolve a newer 9.x release such as `9.24.0` when the merchant graph allows it. Repository
+history does not record a Sentry API reason for preferring `9.19.1` over `9.24.0`; before a
+release raises the minimum to `9.24.0` or any later 9.x version, maintainers should record the
+compatibility reason and rerun the SDK and sample-app checks against that floor. The SDK creates a
 private `SentryClient` and does not invoke `SentrySDK.start`, mutate
 the global scope, or reuse a merchant-owned client. Session Replay, automatic sessions,
 performance tracing, network tracking, and swizzling are disabled. Only explicitly captured
 SDK and analytics-delivery failures are submitted with sanitized, allow-listed context.
 
-Merchants already using an incompatible Sentry version must align their dependency resolution
-with Sentry Cocoa `9.19.1` before integrating this SDK.
+SwiftPM may download approximately 740 MB of Sentry XCFramework archives on a cold dependency
+resolve. That is a CI cache and dependency-fetch cost, not the application binary size; the final
+merchant app links the platform slice it needs.
+
+Merchants already pinned to a different Sentry major may not be able to resolve this package with
+their graph. That is the documented escape hatch for a future lightweight envelope client, but it
+is not part of this release while native Sentry remains compatible.
 
 ### Manual Sentry delivery verification
 

@@ -23,6 +23,12 @@ enum GlomoPayStrings {
             "Checkout is taking longer than expected. You can retry or close checkout."
         )
     }
+    static var securePageTakingLonger: String {
+        localized(
+            "glomopay.secure_page_taking_longer",
+            "The secure page is taking longer than expected. You can retry or go back to checkout."
+        )
+    }
     static func connectionErrorMessage(for type: ConnectionErrorType) -> String {
         switch type {
         case .noInternet:
@@ -57,7 +63,7 @@ enum GlomoPayStrings {
     private static let tableName = "GlomoPayLocalizable"
 
     /// The host's main bundle first, so a merchant can override any string, then the SDK's own
-    /// resources. Mirrors how the telemetry resource is resolved across SPM and CocoaPods.
+    /// resources. Mirrors how the telemetry resource is resolved for the Swift package.
     private static var candidateBundles: [Bundle] {
         #if SWIFT_PACKAGE
         return [Bundle.main, Bundle.module]

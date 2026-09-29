@@ -2,13 +2,13 @@ import Foundation
 
 /// JavaScript injected into WKWebView. Payment detection remains exclusively
 /// on the window.postMessage channel, matching the Flutter/Kotlin SDKs.
-public enum GlomoPayInjectionScripts {
-    public static let main = build(bridgeName: "GlomoPayBridge", emitsBridgeReady: true)
+enum GlomoPayInjectionScripts {
+    static let main = build(bridgeName: "GlomoPayBridge", emitsBridgeReady: true)
 
     /// The flow script is the base bridge plus the `window.opener` stub, and it is injected at
     /// `.atDocumentStart` so the stub exists before the bank page's own scripts run: pages
     /// opened through `window.open` call `opener.postMessage()` during load.
-    public static let flow = build(bridgeName: "GlomoPayFlowBridge", emitsBridgeReady: false)
+    static let flow = build(bridgeName: "GlomoPayFlowBridge", emitsBridgeReady: false)
         + openerStub(bridgeName: "GlomoPayFlowBridge")
 
     /// Carries payment results from bank pages that report through `window.opener`.
@@ -106,11 +106,11 @@ public enum GlomoPayInjectionScripts {
         """
     }
 
-    public static func bootstrap(devMode: Bool) -> String {
+    static func bootstrap(devMode: Bool) -> String {
         "window.__glomoDevMode__ = \(devMode ? "true" : "false");"
     }
 
-    public static let credentialedRequestsFix = """
+    static let credentialedRequestsFix = """
     (function() {
       if (window.__glomoIOSCredentialedRequestsFix__) return;
       window.__glomoIOSCredentialedRequestsFix__ = true;
@@ -134,7 +134,7 @@ public enum GlomoPayInjectionScripts {
 
     /// Prevents iOS WKWebView from zooming the page when an editable field
     /// smaller than 16px receives focus.
-    public static let iosInputZoomFix = """
+    static let iosInputZoomFix = """
     (function() {
       if (window.__glomoIOSInputZoomFixApplied__) return;
       window.__glomoIOSInputZoomFixApplied__ = true;
@@ -164,7 +164,7 @@ public enum GlomoPayInjectionScripts {
     """
 
     /// Keeps checkout content at a 1:1 viewport scale on iOS.
-    public static let iosViewportFitFix = """
+    static let iosViewportFitFix = """
     (function() {
       if (window.__glomoIOSViewportFitFixApplied__) return;
       window.__glomoIOSViewportFitFixApplied__ = true;
@@ -205,7 +205,13 @@ public enum GlomoPayInjectionScripts {
         let readySignal = emitsBridgeReady
             ? """
               // The main checkout's final open-funnel step. Flow WebViews must not emit this.
-              bridge(JSON.stringify({type: 'bridge.ready'}));
+              var sendBridgeReady = function() {
+                if (window.__glomoBridgeReadySent__) return;
+                if (window.top !== window) return;
+                window.__glomoBridgeReadySent__ = true;
+                bridge(JSON.stringify({type: 'bridge.ready'}));
+              };
+              window.__glomoSendBridgeReadyAfterNativeLoad__ = sendBridgeReady;
               """
             : ""
         return """

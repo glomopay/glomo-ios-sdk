@@ -6,6 +6,8 @@ All notable changes to the GlomoPay iOS SDK are documented here.
 
 ### Breaking
 
+- Minimum supported iOS is now 16.0 and distribution is Swift Package Manager only. CocoaPods
+  metadata and CI are removed.
 - `GlomoPayListener.onUserJourneyCompleted(_:)` is a new **required** callback with no
   protocol-extension default, so every integration must add it. Required on purpose, and
   deliberately breaking the pattern the extension's other default sets: the SDK cannot tell which
@@ -93,8 +95,7 @@ All notable changes to the GlomoPay iOS SDK are documented here.
   controller, which `startCheckout` constructs internally and never exposes, so no merchant
   integrating from the README could reach it.
 - Replaced merchant-settable `devMode` with the compile-time `GLOMO_INTERNAL_BUILD` flag resolved
-  by `Package.swift` for SDK-controlled internal builds. The podspec deliberately leaves its
-  equivalent compile condition commented out so merchant releases fail closed. `devMode: true`
+  by `Package.swift` for SDK-controlled internal builds. `devMode: true`
   with a live key used to skip the jailbreak and debugger block entirely, and the sample app
   shipped it enabled by default.
   `GlomoPayLogger.devMode` was a public `static var` any merchant could set process-wide while the

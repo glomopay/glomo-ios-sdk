@@ -7,9 +7,9 @@ enum SDKBuildFlags {
     ///
     /// There is no baked-in value to override: absent means false, and only the compile-time
     /// definition of `GLOMO_INTERNAL_BUILD` turns it on, so a typo or a missing flag both fail
-    /// closed. The SDK is source-distributed through SPM and CocoaPods, so the flag is compiled
-    /// from Glomo-controlled manifests - a merchant cannot set it without editing the package
-    /// manifest or podspec.
+    /// closed. The SDK is source-distributed through Swift Package Manager, so the flag is
+    /// compiled from the Glomo-controlled manifest - a merchant cannot set it without editing the
+    /// package manifest.
     ///
     /// It rides on every analytics event as `dev_mode`, which is how a build that shipped with it
     /// enabled is detected after the fact. It must never gate analytics or error reporting:

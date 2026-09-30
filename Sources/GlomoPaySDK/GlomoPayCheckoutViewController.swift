@@ -44,6 +44,12 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     /// router in, controller behaviour out - instead of asserting against a parallel fake. It is
     /// not part of the public surface: `@testable import` reaches internal, merchants do not.
     var eventRouter: GlomoPayEventRouter!
+    /// How the controller runs its own JavaScript on the main WebView. Internal for the same
+    /// reason as `eventRouter`: the iOS test run has no app host, so a real WebView there never
+    /// loads a page or runs a script, and tests observe the call here instead.
+    var scriptEvaluator: @MainActor (WKWebView, String) -> Void = { webView, script in
+        webView.evaluateJavaScript(script, completionHandler: nil)
+    }
     private var performanceSnapshotCollector: DevicePerformanceSnapshotCollector?
     private var networkSnapshotCollector: IOSNetworkPathSnapshotCollector?
     private var didStartCheckout = false
@@ -592,8 +598,8 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             "url": AnalyticsSanitizer.navigationURL(webView.url),
         ])
         // Load-bearing: this starts the round-trip that ends in markBridgeReady(), the only thing
-        // that hides the loading view. CheckoutControllerTests pins it end to end.
-        webView.evaluateJavaScript(GlomoPayInjectionScripts.sendBridgeReadyAfterNativeLoad, completionHandler: nil)
+        // that hides the loading view. CheckoutControllerTests pins it.
+        scriptEvaluator(webView, GlomoPayInjectionScripts.sendBridgeReadyAfterNativeLoad)
     }
 
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

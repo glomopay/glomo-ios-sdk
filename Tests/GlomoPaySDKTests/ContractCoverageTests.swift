@@ -307,7 +307,7 @@ final class ContractCoverageTests: XCTestCase {
         // The carousel and flow WebViews return early; the call must sit after those returns.
         let mainBranch = try XCTUnwrap(didFinish.components(separatedBy: "return").last)
         XCTAssertTrue(
-            mainBranch.contains("evaluateJavaScript(GlomoPayInjectionScripts.sendBridgeReadyAfterNativeLoad"),
+            mainBranch.contains("scriptEvaluator(webView, GlomoPayInjectionScripts.sendBridgeReadyAfterNativeLoad)"),
             "The main WebView's didFinish no longer evaluates the bridge-ready hook"
         )
     }

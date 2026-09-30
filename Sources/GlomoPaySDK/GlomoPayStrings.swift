@@ -64,21 +64,5 @@ enum GlomoPayStrings {
 
     /// The host's main bundle first, so a merchant can override any string, then the SDK's own
     /// resources. Mirrors how the telemetry resource is resolved for the Swift package.
-    private static var candidateBundles: [Bundle] {
-        #if SWIFT_PACKAGE
-        return [Bundle.main, Bundle.module]
-        #else
-        let ownerBundle = Bundle(for: StringsBundleToken.self)
-        let containers = [Bundle.main, ownerBundle]
-        let resourceBundles = containers.compactMap { container -> Bundle? in
-            guard let url = container.url(forResource: "GlomoPaySDKResources", withExtension: "bundle") else {
-                return nil
-            }
-            return Bundle(url: url)
-        }
-        return containers + resourceBundles
-        #endif
-    }
+    private static var candidateBundles: [Bundle] { [Bundle.main, Bundle.module] }
 }
-
-private final class StringsBundleToken: NSObject {}

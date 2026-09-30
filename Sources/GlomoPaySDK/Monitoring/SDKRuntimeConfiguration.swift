@@ -54,26 +54,12 @@ private enum BundledTelemetryConfiguration {
         return [:]
     }
 
-    private static var candidateBundles: [Bundle] {
-        #if SWIFT_PACKAGE
-        return [Bundle.module]
-        #else
-        let ownerBundle = Bundle(for: ResourceBundleToken.self)
-        let containers = [ownerBundle, Bundle.main]
-        let resourceBundles = containers.compactMap { container -> Bundle? in
-            guard
-                let url = container.url(forResource: "GlomoPaySDKConfiguration", withExtension: "bundle")
-            else {
-                return nil
-            }
-            return Bundle(url: url)
-        }
-        return resourceBundles + containers
-        #endif
-    }
+    /// `Bundle.module` only. The SDK ships through Swift Package Manager alone, so the telemetry
+    /// resource is always the package's own - never the merchant's `Bundle.main`, which could
+    /// otherwise supply a `GLOMOPAY_MIXPANEL_TOKEN` or `GLOMOPAY_SENTRY_DSN` and redirect every
+    /// event's destination.
+    private static var candidateBundles: [Bundle] { [Bundle.module] }
 }
-
-private final class ResourceBundleToken: NSObject {}
 
 private extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }

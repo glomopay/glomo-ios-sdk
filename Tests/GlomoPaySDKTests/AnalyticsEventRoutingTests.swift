@@ -20,17 +20,20 @@ final class AnalyticsEventRoutingTests: XCTestCase {
                 "payload": ["orderId": "order_123", "paymentId": "pay_123"],
             ],
         ])
-        // The hosted page's contract is { event, hasContent }. The previous `value` read matched
-        // a field the page never sends, so the signal was silently dropped.
-        router.handle(envelope: [
-            "type": "message",
-            "data": ["type": "lrs.has_education_steps", "value": true],
-        ])
+        // The page's contract is { type: 'lrs.has_education_steps', value: true }, sent only when
+        // there is content. Neither false nor the { event, hasContent } shape is a signal.
+        for notSignal: [String: Any] in [
+            ["type": "lrs.has_education_steps", "value": false],
+            ["type": "lrs.has_education_steps", "hasContent": true],
+            ["event": "lrs.has_education_steps", "hasContent": true],
+        ] {
+            router.handle(envelope: ["type": "message", "data": notSignal])
+        }
         XCTAssertEqual(analytics.events.map(\.name), [AnalyticsEventName.paymentPending])
 
         router.handle(envelope: [
             "type": "message",
-            "data": ["type": "lrs.has_education_steps", "hasContent": true],
+            "data": ["type": "lrs.has_education_steps", "value": true],
         ])
 
         XCTAssertEqual(analytics.events.map(\.name), [

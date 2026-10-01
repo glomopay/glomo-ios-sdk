@@ -66,10 +66,11 @@ should open such URLs through `UIApplication` is a separate product decision.
 ### LRS education carousel
 
 For LRS orders the overlay shows a 5% back bar and a 15% education strip above the bank page,
-loaded from the hosted carousel. The strip appears only when the page reports
-`{ event: 'lrs.has_education_steps', hasContent: true }`; a 3-second DOM poll covers pages that
-render content without announcing it. When there is nothing to show, the bar is a fixed 48pt and
-the bank page takes the rest.
+loaded from the hosted carousel. The strip appears only when the page posts
+`{ type: 'lrs.has_education_steps', value: true }`, which it sends only when it has content.
+Silence, `value: false` or any other shape leaves it hidden, matching React Native; there is no
+DOM-polling fallback. When there is nothing to show, the bar is a fixed 48pt and the bank page
+takes the rest.
 
 ### Payment outcomes and journeys
 

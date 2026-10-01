@@ -47,7 +47,14 @@ enum GlomoPayInjectionScripts {
         """
     }
 
-    /// Listens for the hosted carousel page's availability message.
+    /// Listens for the hosted carousel page's content signal,
+    /// `{ type: 'lrs.has_education_steps', value: true }` (see `EducationCarouselContract`).
+    ///
+    /// Installed as a document-start user script, so the listener exists before any page script
+    /// runs and a signal posted as early as the page's first inline script is still heard; the
+    /// message handler is registered on the configuration before the page loads. Only the
+    /// content signal is forwarded. There is no DOM-polling fallback: silence means hidden, as
+    /// it does on React Native.
     ///
     /// Flutter monkey-patches `window.postMessage` here, with a comment that same-frame
     /// message events are not reliably delivered to `addEventListener` on Android WebView.
@@ -61,14 +68,11 @@ enum GlomoPayInjectionScripts {
           var send = function(data) {
             try {
               var parsed = typeof data === 'string' ? JSON.parse(data) : data;
-              if (!parsed) return;
-              if (parsed.event !== 'lrs.has_education_steps') return;
-              if (typeof parsed.hasContent !== 'boolean') return;
-              window.__glomoCarouselStateSent__ = true;
+              if (!parsed || parsed.type !== 'lrs.has_education_steps' || parsed.value !== true) return;
               if (window.webkit && window.webkit.messageHandlers &&
                   window.webkit.messageHandlers.\(bridgeName)) {
                 window.webkit.messageHandlers.\(bridgeName).postMessage(
-                  JSON.stringify({event: parsed.event, hasContent: parsed.hasContent})
+                  JSON.stringify({type: 'lrs.has_education_steps', value: true})
                 );
               }
             } catch (e) {}
@@ -76,32 +80,6 @@ enum GlomoPayInjectionScripts {
           window.addEventListener('message', function(event) {
             if (event.data) send(event.data);
           });
-        })();
-        """
-    }
-
-    /// Runs 3 seconds after the page finishes, and only if the page never posted.
-    /// Some carousel pages render content without announcing it.
-    static func carouselFallback(bridgeName: String = "GlomoCarouselBridge") -> String {
-        """
-        (function() {
-          if (window.__glomoCarouselPollScheduled__) return;
-          window.__glomoCarouselPollScheduled__ = true;
-          setTimeout(function() {
-            if (window.__glomoCarouselStateSent__) return;
-            try {
-              var body = document.body;
-              var text = body && body.innerText ? body.innerText.trim() : '';
-              var nodes = body ? body.querySelectorAll('*').length : 0;
-              var hasContent = text.length > 100 || nodes > 10;
-              if (window.webkit && window.webkit.messageHandlers &&
-                  window.webkit.messageHandlers.\(bridgeName)) {
-                window.webkit.messageHandlers.\(bridgeName).postMessage(
-                  JSON.stringify({event: 'lrs.has_education_steps', hasContent: hasContent})
-                );
-              }
-            } catch (e) {}
-          }, 3000);
         })();
         """
     }

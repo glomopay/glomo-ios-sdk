@@ -580,11 +580,8 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     }
 
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        if webView === carouselWebView {
-            // Runs only if the page never posted its own availability message.
-            webView.evaluateJavaScript(GlomoPayInjectionScripts.carouselFallback(), completionHandler: nil)
-            return
-        }
+        // No carousel fallback here: a page that never signals content stays hidden.
+        if webView === carouselWebView { return }
         if webView === flowWebView {
             flowLoadingView?.isHidden = true
             flowProgressView?.isHidden = true
@@ -902,24 +899,26 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         carousel.load(URLRequest(url: url))
     }
 
+    /// Only the content signal changes anything. Every other message, including `value: false`,
+    /// is ignored, so the carousel stays as it was (hidden unless already shown).
     private func handleCarouselMessage(_ body: Any) {
-        let signal: Bool?
+        let isSignal: Bool
         if let text = body as? String {
-            signal = EducationCarouselContract.parseAvailabilitySignal(rawMessage: text)
+            isSignal = EducationCarouselContract.isContentSignal(rawMessage: text)
         } else if let dictionary = body as? [String: Any] {
-            signal = EducationCarouselContract.availabilitySignal(dictionary)
+            isSignal = EducationCarouselContract.isContentSignal(dictionary)
         } else {
-            signal = nil
+            isSignal = false
         }
-        guard let signal else { return }
-        setCarouselState(signal ? .hasContent : .noContent)
+        guard isSignal, carouselState != .failed else { return }
+        setCarouselState(.hasContent)
     }
 
     private func handleCarouselFailure(_ error: Error) {
         let nsError = error as NSError
         guard !ConnectionError.isCancellation(domain: nsError.domain, errorCode: nsError.code) else { return }
         analytics.track(AnalyticsEventName.educationStepsFailed, properties: ["reason": "webview_error"])
-        setCarouselState(.noContent)
+        setCarouselState(.failed)
     }
 
     private func setCarouselState(_ state: EducationCarouselState) {
@@ -1291,7 +1290,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             analytics.track(AnalyticsEventName.educationStepsFailed, properties: [
                 "reason": "content_process_terminated",
             ])
-            setCarouselState(.noContent)
+            setCarouselState(.failed)
             destroyCarousel()
             return
         }

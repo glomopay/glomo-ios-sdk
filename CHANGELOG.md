@@ -1,10 +1,12 @@
 # Changelog
 
 All notable changes to the GlomoPay iOS SDK are documented here.
+This project follows [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+Starting with 1.0.0, the public API follows Semantic Versioning. Breaking
+public API changes require a new major release.
 
-### Breaking
+## [1.0.0] - 2026-10-01
 
 - Minimum supported iOS is now 16.0 and distribution is Swift Package Manager only. CocoaPods
   metadata and CI are removed.

@@ -2,11 +2,11 @@
 
 Native Swift implementation of the GlomoPay checkout SDK. The public contract is intentionally aligned with the Flutter and Kotlin SDKs.
 
-Current release: `0.0.1`
+Current release: `1.0.0`
 
 ## Installation with Swift Package Manager
 
-Add the Git repository URL in Xcode and select the `0.0.1` release tag:
+Add the Git repository URL in Xcode and select the `v1.0.0` release tag:
 
 ```text
 https://github.com/glomopay/glomo-ios-sdk.git
@@ -197,10 +197,22 @@ See the [sample app guide](SampleApp/README.md) for run and optional analytics c
 
 ## Release versioning
 
-Keep the same version in `CHANGELOG.md` and the Git release tag. For version `0.0.1`:
+Swift Package Manager takes the package version from the Git tag, so there is no version
+field in `Package.swift`. The SDK's own version string lives in `GlomoPaySDKBuild.version`
+(`Sources/GlomoPaySDK/Analytics/AnalyticsTracker.swift`) and is what Mixpanel and Sentry
+report; it is not derived from the tag, so it must be updated by hand in the same commit.
+Keep `GlomoPaySDKBuild.version`, `CHANGELOG.md`, and the Git release tag in step. For
+version `1.0.0`:
 
-Generate the SDK-owned telemetry resource from the release environment before creating the
-tag. The script also accepts `MIXPANEL_TOKEN` and `SENTRY_DSN` aliases:
+There is no separate publish step. Swift Package Manager resolves the package directly from
+this repository, so the tag on `main` is the release. Everything a merchant compiles must
+therefore already be in the commit being tagged, which means the version bump and the
+telemetry resource below both belong in the release pull request, not in a step performed at
+tag time.
+
+If the release environment's values have changed, regenerate the SDK-owned telemetry resource
+in the release branch so the update is part of the merge commit. The script also accepts
+`MIXPANEL_TOKEN` and `SENTRY_DSN` aliases:
 
 ```bash
 GLOMOPAY_MIXPANEL_TOKEN="$MIXPANEL_TOKEN" \
@@ -210,10 +222,15 @@ GLOMOPAY_SENTRY_DSN="$SENTRY_DSN" \
 
 Confirm that `Sources/GlomoPaySDK/Resources/GlomoPayTelemetryConfiguration.plist` contains
 the release values. Because Swift Package Manager distributes this repository's tagged source,
-the generated resource must be included in the release tag. Never place a Sentry auth token or
-symbol-upload credential in this file.
+the generated resource must be included in the release tag. Both values are client-side
+credentials and are visible to anyone who can resolve the package. Never place a Sentry auth
+token or symbol-upload credential in this file.
+
+After the release pull request is merged, tag the merge commit on `main`:
 
 ```bash
-git tag 0.0.1
-git push origin 0.0.1
+git tag v1.0.0
+git push origin v1.0.0
 ```
+
+Tags are only ever created on `main`, never on a release branch.

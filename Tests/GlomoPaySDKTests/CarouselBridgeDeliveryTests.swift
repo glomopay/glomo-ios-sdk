@@ -20,6 +20,21 @@ final class CarouselBridgeDeliveryTests: XCTestCase {
     /// WebKit to execute JavaScript at all; each test then gets a strict budget of its own.
     private static var webKitIsWarm = false
 
+    /// Quarantined in the hostless test bundle. CI runs these tests in a plain xctest bundle with
+    /// no host app, where the simulator cannot reliably launch WebKit's WebContent process: a run
+    /// on 8afbe4c waited five minutes for an empty page and WebKit never answered. Production always
+    /// runs inside a host app, and an instrumented run on iOS 18.5 showed the signal reaching
+    /// native once WebKit was up. Show/hide rules stay covered by the carousel contract tests.
+    /// Follow-up: run this suite in the SampleApp test host and drop this skip.
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        try XCTSkipUnless(
+            Bundle.main.bundleURL.pathExtension == "app",
+            "WebKit integration tests need a host app; hostless xctest on CI cannot reliably "
+                + "launch the WebContent process. Follow-up: run them in the SampleApp test host."
+        )
+    }
+
     override func tearDown() {
         webView?.configuration.userContentController.removeAllScriptMessageHandlers()
         webView = nil

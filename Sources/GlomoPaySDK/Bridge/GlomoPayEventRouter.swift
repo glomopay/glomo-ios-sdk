@@ -204,8 +204,9 @@ final class GlomoPayEventRouter {
         // journey no merchant is told about. If the page still emits it, it now falls through to
         // the default branch as Unsupported Functionality Used, which is the correct outcome.
         case "lrs.has_education_steps":
-            // The page's contract is { event, hasContent }; the old `value` read never matched.
-            if EducationCarouselContract.hasContent(payloadData) == true {
+            // The page's contract is { type: 'lrs.has_education_steps', value: true }, sent only
+            // when there is content; anything else is not a signal.
+            if EducationCarouselContract.isContentSignal(payloadData) {
                 analytics.track(AnalyticsEventName.educationStepsShown, properties: [
                     "source": payloadData["source"],
                 ])

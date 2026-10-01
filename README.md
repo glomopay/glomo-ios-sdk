@@ -66,10 +66,11 @@ should open such URLs through `UIApplication` is a separate product decision.
 ### LRS education carousel
 
 For LRS orders the overlay shows a 5% back bar and a 15% education strip above the bank page,
-loaded from the hosted carousel. The strip appears only when the page reports
-`{ event: 'lrs.has_education_steps', hasContent: true }`; a 3-second DOM poll covers pages that
-render content without announcing it. When there is nothing to show, the bar is a fixed 48pt and
-the bank page takes the rest.
+loaded from the hosted carousel. The strip appears only when the page posts
+`{ type: 'lrs.has_education_steps', value: true }`, which it sends only when it has content.
+Silence, `value: false` or any other shape leaves it hidden, matching React Native; there is no
+DOM-polling fallback. When there is nothing to show, the bar is a fixed 48pt and the bank page
+takes the rest.
 
 ### Payment outcomes and journeys
 
@@ -135,11 +136,16 @@ destroy a 3DS session mid-redirect.
 
 ### Developer flag
 
-There is no merchant-settable `devMode`. For an SDK-controlled SwiftPM build,
-`GLOMO_INTERNAL_BUILD=true` at package resolution defines the compile condition. The flag
-relaxes the jailbreak/debugger block, enables verbose logging, and rides on every analytics event
-as `dev_mode` so an internal build is detectable. It does not gate analytics or error reporting,
-which are decided by Mixpanel token and Sentry DSN presence alone.
+There is no merchant-settable `devMode`. The published package never defines the internal-build
+compilation condition `GLOMO_INTERNAL_BUILD`, and `Package.swift` reads nothing from the build
+environment. Glomo's internal builds pass it explicitly on the command line (see
+[CONTRIBUTING.md](CONTRIBUTING.md#internal-builds)). The flag relaxes the jailbreak/debugger block
+and enables verbose logging.
+
+It is not a security boundary: the SDK is source-distributed, and whoever compiles it can define
+any compilation condition. It is reported as `dev_mode` on every Mixpanel and Sentry event, so a
+build that enables it shows up. It does not gate analytics or error reporting, which are decided
+by Mixpanel token and Sentry DSN presence alone.
 
 ### User-facing strings
 

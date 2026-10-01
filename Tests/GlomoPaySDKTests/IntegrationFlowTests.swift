@@ -5,8 +5,7 @@ final class IntegrationFlowTests: XCTestCase {
     func testWrapperCredentialsResolveStandardCheckoutEndToEnd() throws {
         let config = GlomoPayConfig(
             publicKey: "test_public_key",
-            orderId: "order_123456",
-            devMode: true
+            orderId: "order_123456"
         )
         let listener = IntegrationListener()
 
@@ -16,10 +15,12 @@ final class IntegrationFlowTests: XCTestCase {
 
         let router = GlomoPayEventRouter(
             listener: listener,
-            devMode: config.devMode,
+            devMode: false,
             onComplete: { result in
                 if case .success = result { listener.completedCount += 1 }
-            }
+            },
+            analytics: NoOpAnalyticsTracker(),
+            errorReporter: NoOpSDKErrorReporter()
         )
         router.handle(envelope: [
             "type": "message",
@@ -57,27 +58,48 @@ final class IntegrationFlowTests: XCTestCase {
         XCTAssertEqual(client.lastRequest?.url?.path, "/api/public/v1/order/order_123456")
     }
 
-    func testOrderDetectionFailureFallsBackToStandardCheckout() async throws {
-        let client = IntegrationHTTPClient(result: .failure(URLError(.timedOut)))
-        let api = GlomoPayApiClient(
-            publicKey: "live_public_key",
-            baseURL: URL(string: "https://api.example.com")!,
-            client: client
-        )
+    /// Replaces testOrderDetectionFailureFallsBackToStandardCheckout, which asserted the
+    /// defect: the order type is only knowable from a successful fetch, and guessing "standard"
+    /// routes LRS traffic to the wrong checkout host. The controller now terminates instead, so
+    /// there is no fallback type left to assert - only a typed failure to report.
+    func testOrderDetectionFailureIsTypedAndNeverGuessesTheCheckoutHost() async throws {
         let config = GlomoPayConfig(publicKey: "live_public_key", orderId: "order_123456")
 
-        let detectedType: String
+        let timeoutClient = IntegrationHTTPClient(result: .failure(URLError(.timedOut)))
+        let timeoutAPI = GlomoPayApiClient(
+            publicKey: "live_public_key",
+            baseURL: URL(string: "https://api.example.com")!,
+            client: timeoutClient
+        )
         do {
-            _ = try await api.fetchOrder(config.orderId!)
-            detectedType = "standard"
+            _ = try await timeoutAPI.fetchOrder(config.orderId!)
+            XCTFail("Expected a typed timeout failure")
         } catch {
-            // This is the same safe fallback used by the checkout controller.
-            detectedType = "standard"
+            XCTAssertEqual(error as? GlomoPayAPIError, .requestTimeout)
         }
-        let url = try GlomoPaySDK.shared.checkoutURL(for: config, orderType: detectedType)
 
-        XCTAssertEqual(detectedType, "standard")
-        XCTAssertEqual(url.host, "checkout.glomopay.com")
+        let offlineClient = IntegrationHTTPClient(result: .failure(URLError(.notConnectedToInternet)))
+        let offlineAPI = GlomoPayApiClient(
+            publicKey: "live_public_key",
+            baseURL: URL(string: "https://api.example.com")!,
+            client: offlineClient
+        )
+        do {
+            _ = try await offlineAPI.fetchOrder(config.orderId!)
+            XCTFail("Expected a typed transport failure")
+        } catch {
+            XCTAssertEqual(
+                error as? GlomoPayAPIError,
+                .transport(code: URLError.Code.notConnectedToInternet.rawValue)
+            )
+        }
+    }
+
+    func testRetryKeepsResolvedOrderTypeInsteadOfRequestedAutoType() {
+        var state = CheckoutFlowTypeState(requestedOrderType: "auto")
+        state.resolve("lrs")
+
+        XCTAssertEqual(state.currentOrderType, "lrs")
     }
 
     func testBridgeTerminalResultIsDeliveredOnceDuringRegressionFlow() {
@@ -86,7 +108,9 @@ final class IntegrationFlowTests: XCTestCase {
         let router = GlomoPayEventRouter(
             listener: listener,
             devMode: false,
-            onComplete: { results.append($0) }
+            onComplete: { results.append($0) },
+            analytics: NoOpAnalyticsTracker(),
+            errorReporter: NoOpSDKErrorReporter()
         )
 
         let success: [String: Any] = [
@@ -131,6 +155,7 @@ private final class IntegrationHTTPClient: GlomoPayHTTPClient {
 }
 
 private final class IntegrationListener: GlomoPayListener {
+    var journeys: [GlomoPayUserJourneyPayload] = []
     var successes: [GlomoPayPayload] = []
     var terminations: [TerminationSource] = []
     var completedCount = 0
@@ -138,6 +163,7 @@ private final class IntegrationListener: GlomoPayListener {
     func onPaymentSuccess(_ payload: GlomoPayPayload) { successes.append(payload) }
     func onPaymentFailure(_ payload: GlomoPayPayload) {}
     func onSdkError(_ errors: [SdkError]) {}
+    func onUserJourneyCompleted(_ payload: GlomoPayUserJourneyPayload) { journeys.append(payload) }
     func onConnectionError(_ error: ConnectionError) {}
     func onPaymentTerminate(_ source: TerminationSource) { terminations.append(source) }
 }

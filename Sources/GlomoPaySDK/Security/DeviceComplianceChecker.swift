@@ -47,7 +47,7 @@ public final class DeviceComplianceChecker {
             return DeviceComplianceResult(
                 isCompliant: true,
                 isJailbroken: false,
-                isDebuggerAttached: false,
+                isDebuggerAttached: debuggerAttached,
                 isSimulator: simulator,
                 isDeveloperModeEnabled: false,
                 checksSkipped: true

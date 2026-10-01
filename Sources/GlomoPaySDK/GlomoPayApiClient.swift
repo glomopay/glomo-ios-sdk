@@ -6,22 +6,36 @@ public protocol GlomoPayHTTPClient {
 
 extension URLSession: GlomoPayHTTPClient {}
 
+/// Order-fetch failures, one case per cause, because each one reports a different fault:
+/// a phone with no signal and a backend returning 500 must not reach the host identically.
+///
+/// No case carries the response body. The body was retained here, never read, and travelled
+/// up as `localizedDescription` into analytics and Sentry - an order payload leaving the
+/// device. Status code only.
 public enum GlomoPayAPIError: Error, LocalizedError, Equatable {
     case invalidOrderURL
-    case failedToLoadOrder(statusCode: Int, body: String)
+    /// The request timed out before the backend answered.
+    case requestTimeout
+    /// The request never reached the backend. `code` is the `NSURLError` code.
+    case transport(code: Int)
+    /// The backend answered with a non-2xx status, so connectivity is fine.
+    case failedToLoadOrder(statusCode: Int)
+    /// The backend answered with something this client cannot parse: a broken contract
+    /// between the SDK and its own backend.
     case invalidOrderResponse
-    case network(String)
 
     public var errorDescription: String? {
         switch self {
         case .invalidOrderURL:
             return "Unable to build order URL"
-        case let .failedToLoadOrder(statusCode, body):
-            return "Failed to load order. Status: \(statusCode), Body: \(body)"
+        case .requestTimeout:
+            return "Order request timed out"
+        case let .transport(code):
+            return "Unable to reach the order service (\(code))"
+        case let .failedToLoadOrder(statusCode):
+            return "Failed to load order. Status: \(statusCode)"
         case .invalidOrderResponse:
             return "Order response was not a JSON object"
-        case let .network(message):
-            return "Network error fetching order: \(message)"
         }
     }
 }
@@ -30,19 +44,19 @@ public enum GlomoPayAPIError: Error, LocalizedError, Equatable {
 public final class GlomoPayApiClient {
     public static let defaultBaseURL = URL(string: "https://api.glomopay.com")!
 
+    /// Exposed so the checkout-open watchdog can be derived from it instead of hard-coded.
+    static let requestTimeout: TimeInterval = 15
+
     private let publicKey: String
-    private let devMode: Bool
     private let baseURL: URL
     private let client: GlomoPayHTTPClient
 
     public init(
         publicKey: String,
-        devMode: Bool = false,
         baseURL: URL = GlomoPayApiClient.defaultBaseURL,
         client: GlomoPayHTTPClient = URLSession.shared
     ) {
         self.publicKey = publicKey
-        self.devMode = devMode
         self.baseURL = baseURL
         self.client = client
     }
@@ -57,42 +71,40 @@ public final class GlomoPayApiClient {
 
         var request = URLRequest(url: endpoint)
         request.httpMethod = "GET"
-        request.timeoutInterval = 15
+        request.timeoutInterval = Self.requestTimeout
         request.setValue("Bearer \(publicKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         do {
             let (data, response) = try await client.data(for: request)
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-            let body = String(data: data, encoding: .utf8) ?? ""
 
-            guard statusCode == 200 else {
-                throw GlomoPayAPIError.failedToLoadOrder(statusCode: statusCode, body: body)
+            // Any 2xx is the backend answering. A 2xx body this client cannot parse is a
+            // malformed response, not a status fault.
+            guard (200..<300).contains(statusCode) else {
+                throw GlomoPayAPIError.failedToLoadOrder(statusCode: statusCode)
             }
-            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            guard let object = try? JSONSerialization.jsonObject(with: data),
+                  let dictionary = object as? [String: Any] else {
                 throw GlomoPayAPIError.invalidOrderResponse
             }
-            return object
+            return dictionary
         } catch let error as GlomoPayAPIError {
-            if devMode { print("[GlomoPay API] \(error.localizedDescription)") }
-            throw wrap(error)
+            // The typed case travels as-is: the caller decides which callback it reports through.
+            GlomoPayLogger.error("Order fetch failed", error: error)
+            throw error
         } catch {
-            let networkError = GlomoPayAPIError.network(error.localizedDescription)
-            if devMode { print("[GlomoPay API] \(networkError.localizedDescription)") }
-            throw networkError
+            let transportError = Self.transportError(from: error)
+            GlomoPayLogger.error("Order fetch failed", error: transportError)
+            throw transportError
         }
     }
 
-    private func wrap(_ error: GlomoPayAPIError) -> GlomoPayAPIError {
-        switch error {
-        case let .failedToLoadOrder(statusCode, body):
-            return .network(GlomoPayAPIError.failedToLoadOrder(statusCode: statusCode, body: body).localizedDescription)
-        case .invalidOrderResponse:
-            return .network(error.localizedDescription)
-        case .invalidOrderURL:
-            return .network(error.localizedDescription)
-        case .network:
-            return error
+    private static func transportError(from error: Error) -> GlomoPayAPIError {
+        let nsError = error as NSError
+        guard nsError.domain == NSURLErrorDomain else {
+            return .transport(code: nsError.code)
         }
+        return nsError.code == NSURLErrorTimedOut ? .requestTimeout : .transport(code: nsError.code)
     }
 }

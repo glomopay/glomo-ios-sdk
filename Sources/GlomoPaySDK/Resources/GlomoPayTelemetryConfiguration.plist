@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>GLOMOPAY_MIXPANEL_TOKEN</key>
+	<string>f3b37de98fb3d83e10a59850db442184</string>
+	<key>GLOMOPAY_SENTRY_DSN</key>
+	<string>https://72cc1c1f34f0e42322759dc59bec7c26@o4508368252174336.ingest.de.sentry.io/4511931066744912</string>
+</dict>
+</plist>

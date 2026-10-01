@@ -2,15 +2,126 @@ import Foundation
 
 /// JavaScript injected into WKWebView. Payment detection remains exclusively
 /// on the window.postMessage channel, matching the Flutter/Kotlin SDKs.
-public enum GlomoPayInjectionScripts {
-    public static let main = build(bridgeName: "GlomoPayBridge")
-    public static let flow = build(bridgeName: "GlomoPayFlowBridge")
+enum GlomoPayInjectionScripts {
+    static let main = build(bridgeName: "GlomoPayBridge", emitsBridgeReady: true)
 
-    public static func bootstrap(devMode: Bool) -> String {
+    /// The flow script is the base bridge plus the `window.opener` stub, and it is injected at
+    /// `.atDocumentStart` so the stub exists before the bank page's own scripts run: pages
+    /// opened through `window.open` call `opener.postMessage()` during load.
+    static let flow = build(bridgeName: "GlomoPayFlowBridge", emitsBridgeReady: false)
+        + openerStub(bridgeName: "GlomoPayFlowBridge")
+
+    /// Carries payment results from bank pages that report through `window.opener`.
+    /// Without it those pages produce no bridge message at all: the payment completes at the
+    /// bank and the SDK never hears about it.
+    ///
+    /// It routes through `window.__glomoBridge__`, the sender `build()` publishes, and falls
+    /// back to the message handler directly. This path must never be silently suppressed, so
+    /// the fallback is deliberate rather than a convenience.
+    static func openerStub(bridgeName: String) -> String {
+        """
+        (function() {
+          if (window.__glomoOpenerStubInjected__) return;
+          window.__glomoOpenerStubInjected__ = true;
+          try {
+            if (!window.opener) {
+              var flowBridge = function(message) {
+                if (window.__glomoBridge__) return window.__glomoBridge__(message);
+                try {
+                  if (window.webkit && window.webkit.messageHandlers &&
+                      window.webkit.messageHandlers.\(bridgeName)) {
+                    window.webkit.messageHandlers.\(bridgeName).postMessage(message);
+                  }
+                } catch (e) {}
+              };
+              window.opener = {
+                postMessage: function(message) {
+                  flowBridge(JSON.stringify({type: 'message', data: message}));
+                },
+                close: function() {},
+                closed: false
+              };
+            }
+          } catch (e) {}
+        })();
+        """
+    }
+
+    /// Listens for the hosted carousel page's availability message.
+    ///
+    /// Flutter monkey-patches `window.postMessage` here, with a comment that same-frame
+    /// message events are not reliably delivered to `addEventListener` on Android WebView.
+    /// That constraint does not apply to WKWebView, so this uses the listener rather than
+    /// porting the patch as a cargo cult.
+    static func carousel(bridgeName: String = "GlomoCarouselBridge") -> String {
+        """
+        (function() {
+          if (window.__glomoCarouselListenerReady__) return;
+          window.__glomoCarouselListenerReady__ = true;
+          var send = function(data) {
+            try {
+              var parsed = typeof data === 'string' ? JSON.parse(data) : data;
+              if (!parsed) return;
+              if (parsed.event !== 'lrs.has_education_steps') return;
+              if (typeof parsed.hasContent !== 'boolean') return;
+              window.__glomoCarouselStateSent__ = true;
+              if (window.webkit && window.webkit.messageHandlers &&
+                  window.webkit.messageHandlers.\(bridgeName)) {
+                window.webkit.messageHandlers.\(bridgeName).postMessage(
+                  JSON.stringify({event: parsed.event, hasContent: parsed.hasContent})
+                );
+              }
+            } catch (e) {}
+          };
+          window.addEventListener('message', function(event) {
+            if (event.data) send(event.data);
+          });
+        })();
+        """
+    }
+
+    /// Runs 3 seconds after the page finishes, and only if the page never posted.
+    /// Some carousel pages render content without announcing it.
+    static func carouselFallback(bridgeName: String = "GlomoCarouselBridge") -> String {
+        """
+        (function() {
+          if (window.__glomoCarouselPollScheduled__) return;
+          window.__glomoCarouselPollScheduled__ = true;
+          setTimeout(function() {
+            if (window.__glomoCarouselStateSent__) return;
+            try {
+              var body = document.body;
+              var text = body && body.innerText ? body.innerText.trim() : '';
+              var nodes = body ? body.querySelectorAll('*').length : 0;
+              var hasContent = text.length > 100 || nodes > 10;
+              if (window.webkit && window.webkit.messageHandlers &&
+                  window.webkit.messageHandlers.\(bridgeName)) {
+                window.webkit.messageHandlers.\(bridgeName).postMessage(
+                  JSON.stringify({event: 'lrs.has_education_steps', hasContent: hasContent})
+                );
+              }
+            } catch (e) {}
+          }, 3000);
+        })();
+        """
+    }
+
+    /// The page-side hook `main` publishes, and the only way the main checkout emits
+    /// `bridge.ready`. It is kept in one place so the page and native sides cannot drift apart.
+    static let nativeLoadReadyHook = "__glomoSendBridgeReadyAfterNativeLoad__"
+
+    /// What the controller evaluates from `webView(_:didFinish:)` on the main WebView. It is the
+    /// only thing that leads to `markBridgeReady()`, which is the only thing that hides the
+    /// loading view on a successful load. If this call is removed, a fully loaded checkout keeps
+    /// its spinner until the render watchdog reports a timeout over a working page.
+    static let sendBridgeReadyAfterNativeLoad =
+        "window.\(nativeLoadReadyHook) && window.\(nativeLoadReadyHook)();"
+
+    static func bootstrap(devMode: Bool) -> String {
         "window.__glomoDevMode__ = \(devMode ? "true" : "false");"
     }
 
-    public static let credentialedRequestsFix = """
+    static let credentialedRequestsFix = """
     (function() {
       if (window.__glomoIOSCredentialedRequestsFix__) return;
       window.__glomoIOSCredentialedRequestsFix__ = true;
@@ -34,7 +145,7 @@ public enum GlomoPayInjectionScripts {
 
     /// Prevents iOS WKWebView from zooming the page when an editable field
     /// smaller than 16px receives focus.
-    public static let iosInputZoomFix = """
+    static let iosInputZoomFix = """
     (function() {
       if (window.__glomoIOSInputZoomFixApplied__) return;
       window.__glomoIOSInputZoomFixApplied__ = true;
@@ -64,7 +175,7 @@ public enum GlomoPayInjectionScripts {
     """
 
     /// Keeps checkout content at a 1:1 viewport scale on iOS.
-    public static let iosViewportFitFix = """
+    static let iosViewportFitFix = """
     (function() {
       if (window.__glomoIOSViewportFitFixApplied__) return;
       window.__glomoIOSViewportFitFixApplied__ = true;
@@ -101,8 +212,20 @@ public enum GlomoPayInjectionScripts {
     })();
     """
 
-    private static func build(bridgeName: String) -> String {
-        """
+    private static func build(bridgeName: String, emitsBridgeReady: Bool) -> String {
+        let readySignal = emitsBridgeReady
+            ? """
+              // The main checkout's final open-funnel step. Flow WebViews must not emit this.
+              var sendBridgeReady = function() {
+                if (window.__glomoBridgeReadySent__) return;
+                if (window.top !== window) return;
+                window.__glomoBridgeReadySent__ = true;
+                bridge(JSON.stringify({type: 'bridge.ready'}));
+              };
+              window.\(nativeLoadReadyHook) = sendBridgeReady;
+              """
+            : ""
+        return """
         (function() {
           var flag = '__glomo_\(bridgeName)_Injected__';
           if (window[flag]) return;
@@ -114,6 +237,9 @@ public enum GlomoPayInjectionScripts {
               window.webkit.messageHandlers.\(bridgeName).postMessage(message);
             }
           };
+          // Published so the opener stub can route through the same sender instead of
+          // reaching for the message handler and falling through on every call.
+          if (!window.__glomoBridge__) window.__glomoBridge__ = bridge;
           function send(level, message) {
             if (DEV() || level === 'error') {
               bridge(JSON.stringify({type: 'console', level: level, message: String(message)}));
@@ -167,6 +293,7 @@ public enum GlomoPayInjectionScripts {
               bridge(JSON.stringify({type: 'file.input', accept: target.accept || '', inputId: target.id || '', inputName: target.name || ''}));
             }
           }, true);
+          \(readySignal)
         })();
         """
     }

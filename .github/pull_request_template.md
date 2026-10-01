@@ -23,6 +23,6 @@
 - [ ] Release-build logging is off by default; no request or response bodies logged.
 - [ ] `PrivacyInfo.xcprivacy` updated if data collection or required-reason API use
       changed.
-- [ ] No version bump, no release tag, and no `pod trunk push`. Releases are cut by
+- [ ] No version bump or release tag. Releases are cut by
       GlomoPay.
 - [ ] CHANGELOG.md updated if merchant-visible behaviour changed.

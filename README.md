@@ -135,11 +135,16 @@ destroy a 3DS session mid-redirect.
 
 ### Developer flag
 
-There is no merchant-settable `devMode`. For an SDK-controlled SwiftPM build,
-`GLOMO_INTERNAL_BUILD=true` at package resolution defines the compile condition. The flag
-relaxes the jailbreak/debugger block, enables verbose logging, and rides on every analytics event
-as `dev_mode` so an internal build is detectable. It does not gate analytics or error reporting,
-which are decided by Mixpanel token and Sentry DSN presence alone.
+There is no merchant-settable `devMode`. The published package never defines the internal-build
+compilation condition `GLOMO_INTERNAL_BUILD`, and `Package.swift` reads nothing from the build
+environment. Glomo's internal builds pass it explicitly on the command line (see
+[CONTRIBUTING.md](CONTRIBUTING.md#internal-builds)). The flag relaxes the jailbreak/debugger block
+and enables verbose logging.
+
+It is not a security boundary: the SDK is source-distributed, and whoever compiles it can define
+any compilation condition. It is reported as `dev_mode` on every Mixpanel and Sentry event, so a
+build that enables it shows up. It does not gate analytics or error reporting, which are decided
+by Mixpanel token and Sentry DSN presence alone.
 
 ### User-facing strings
 

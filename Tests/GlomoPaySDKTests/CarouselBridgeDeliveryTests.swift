@@ -11,12 +11,10 @@ import XCTest
 @MainActor
 final class CarouselBridgeDeliveryTests: XCTestCase {
     private var webView: WKWebView?
-    private var navigation: NavigationRecorder?
 
     override func tearDown() {
         webView?.configuration.userContentController.removeAllScriptMessageHandlers()
         webView = nil
-        navigation = nil
         super.tearDown()
     }
 
@@ -55,8 +53,7 @@ final class CarouselBridgeDeliveryTests: XCTestCase {
                 window.parent.postMessage({ type: 'lrs.has_education_steps', value: false }, '*');
                 window.parent.postMessage({ event: 'lrs.has_education_steps', hasContent: true }, '*');
                 """,
-            body: body,
-            expectingSignal: false
+            body: body
         )
 
         XCTAssertEqual(received.count, 0)
@@ -64,40 +61,42 @@ final class CarouselBridgeDeliveryTests: XCTestCase {
 
     // MARK: Helpers
 
-    /// Loads a page with the production carousel script and bridge, and returns what the native
-    /// handler received. With `expectingSignal`, it waits for the first message; otherwise for the
-    /// page to finish. Either way it then drains the run loop briefly to catch anything extra.
-    private func load(head script: String, body: String = "", expectingSignal: Bool = true) throws -> [Any] {
+    /// Loads a page with the production carousel script and bridge and returns what the native
+    /// carousel handler received.
+    ///
+    /// Every page ends by posting a marker through the same `postMessage` channel. Message events
+    /// reach listeners in order, and the carousel listener is registered first (document start),
+    /// so when the marker arrives every earlier message has been through it. That makes "nothing
+    /// was forwarded" observable without timing, and without depending on navigation callbacks.
+    private func load(head script: String, body: String = "") throws -> [Any] {
         let box = MessageBox()
-        let firstMessage = expectation(description: "native received the signal")
-        firstMessage.assertForOverFulfill = false
+        let done = expectation(description: "page posted its last message")
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(
             source: GlomoPayInjectionScripts.carousel(),
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
         ))
-        controller.add(GlomoPayJavaScriptBridge { body in
-            box.append(body)
-            firstMessage.fulfill()
-        }, name: "GlomoCarouselBridge")
+        controller.add(GlomoPayJavaScriptBridge { box.append($0) }, name: "GlomoCarouselBridge")
+        controller.add(GlomoPayJavaScriptBridge { _ in done.fulfill() }, name: "TestDone")
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.userContentController = controller
 
         let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 320, height: 120), configuration: configuration)
-        let finished = expectation(description: "page finished")
-        let navigation = NavigationRecorder { finished.fulfill() }
-        webView.navigationDelegate = navigation
         self.webView = webView
-        self.navigation = navigation
-
-        webView.loadHTMLString(
-            "<!doctype html><html><head><script>\(script)</script></head><body>\(body)</body></html>",
-            baseURL: URL(string: "https://carousel.example.test/")
-        )
-        wait(for: expectingSignal ? [firstMessage, finished] : [finished], timeout: 30)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        let page = """
+            <!doctype html><html><head><script>
+            window.addEventListener('message', function (event) {
+              if (event.data === '__test_done__') window.webkit.messageHandlers.TestDone.postMessage('done');
+            });
+            \(script)
+            window.parent.postMessage('__test_done__', '*');
+            </script></head><body>\(body)</body></html>
+            """
+        webView.loadHTMLString(page, baseURL: URL(string: "https://carousel.example.test/"))
+        // Generous: the first WKWebView in a test process pays for a cold WebContent launch.
+        wait(for: [done], timeout: 60)
         return box.messages
     }
 }
@@ -105,17 +104,5 @@ final class CarouselBridgeDeliveryTests: XCTestCase {
 private final class MessageBox {
     private(set) var messages: [Any] = []
     func append(_ message: Any) { messages.append(message) }
-}
-
-private final class NavigationRecorder: NSObject, WKNavigationDelegate {
-    private let onFinish: () -> Void
-
-    init(onFinish: @escaping () -> Void) {
-        self.onFinish = onFinish
-    }
-
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        onFinish()
-    }
 }
 #endif

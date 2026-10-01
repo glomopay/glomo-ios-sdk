@@ -11,9 +11,13 @@ import XCTest
 @MainActor
 final class CarouselBridgeDeliveryTests: XCTestCase {
     private var webView: WKWebView?
-    /// The first WebContent process of a test run can take minutes to come up on a cold CI
-    /// simulator (seen at about two minutes on the iOS 18.5 job). Paying that once, up front, keeps
-    /// it out of each test's own wait.
+    /// Environment readiness, kept apart from the behaviour under test. On a freshly booted CI
+    /// simulator (iOS 18.5) WebKit's own log showed "WebContent process took 29.47 seconds to
+    /// launch", the GPU process 29.2 s, then `WebProcessProxy::didBecomeUnresponsive`, and the
+    /// first loads of the run delivered nothing for about two minutes. Instrumented runs on the
+    /// same runtime showed the document-start script, the page script and the native handler all
+    /// working once WebKit was up, hosted in a window or not. So the run first waits, once, for
+    /// WebKit to execute JavaScript at all; each test then gets a strict budget of its own.
     private static var webKitIsWarm = false
 
     override func tearDown() {
@@ -89,6 +93,8 @@ final class CarouselBridgeDeliveryTests: XCTestCase {
             }
         }
         poll()
+        // If WebKit never becomes responsive this fails here, naming the environment, rather than
+        // as a missing carousel signal.
         wait(for: [warm], timeout: 300)
         Self.webKitIsWarm = true
     }
@@ -121,7 +127,8 @@ final class CarouselBridgeDeliveryTests: XCTestCase {
             </script></head><body>\(body)</body></html>
             """
         webView.loadHTMLString(page, baseURL: URL(string: "https://carousel.example.test/"))
-        wait(for: [done], timeout: 60)
+        // Strict: with WebKit warm, a page delivers its messages in well under a second.
+        wait(for: [done], timeout: 10)
         return box.messages
     }
 }

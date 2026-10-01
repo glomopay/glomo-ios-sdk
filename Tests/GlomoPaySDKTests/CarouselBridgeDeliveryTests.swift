@@ -11,6 +11,10 @@ import XCTest
 @MainActor
 final class CarouselBridgeDeliveryTests: XCTestCase {
     private var webView: WKWebView?
+    /// The first WebContent process of a test run can take minutes to come up on a cold CI
+    /// simulator (seen at about two minutes on the iOS 18.5 job). Paying that once, up front, keeps
+    /// it out of each test's own wait.
+    private static var webKitIsWarm = false
 
     override func tearDown() {
         webView?.configuration.userContentController.removeAllScriptMessageHandlers()
@@ -68,7 +72,29 @@ final class CarouselBridgeDeliveryTests: XCTestCase {
     /// reach listeners in order, and the carousel listener is registered first (document start),
     /// so when the marker arrives every earlier message has been through it. That makes "nothing
     /// was forwarded" observable without timing, and without depending on navigation callbacks.
+    private func warmUpWebKitOnce() {
+        guard !Self.webKitIsWarm else { return }
+        let warm = expectation(description: "WebKit answered once")
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.loadHTMLString("<!doctype html><title>warm</title>", baseURL: nil)
+        func poll() {
+            webView.evaluateJavaScript("document.readyState") { value, _ in
+                if value as? String == "complete" {
+                    warm.fulfill()
+                } else {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { poll() }
+                }
+            }
+        }
+        poll()
+        wait(for: [warm], timeout: 300)
+        Self.webKitIsWarm = true
+    }
+
     private func load(head script: String, body: String = "") throws -> [Any] {
+        warmUpWebKitOnce()
         let box = MessageBox()
         let done = expectation(description: "page posted its last message")
         let controller = WKUserContentController()
@@ -95,7 +121,6 @@ final class CarouselBridgeDeliveryTests: XCTestCase {
             </script></head><body>\(body)</body></html>
             """
         webView.loadHTMLString(page, baseURL: URL(string: "https://carousel.example.test/"))
-        // Generous: the first WKWebView in a test process pays for a cold WebContent launch.
         wait(for: [done], timeout: 60)
         return box.messages
     }

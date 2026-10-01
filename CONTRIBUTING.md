@@ -67,8 +67,9 @@ equivalent, so this is enforced by review.
   implementation details that may need to be removed later.
 - Use `@_spi` if something must cross a module boundary without becoming public
   API.
-- The SDK stays on **0.x until GlomoPay freezes the API.** Propose breaking
-  changes freely while pre-1.0; do not tag 1.0.0 yourself.
+- From **1.0.0**, the public API follows Semantic Versioning. Breaking public
+  API changes require GlomoPay approval and a new major version. Release tags
+  and publication remain the responsibility of the GlomoPay release owner.
 
 ## 3. Apple platform requirements
 
@@ -99,6 +100,24 @@ changing it.
 
 Release builds log nothing by default. Never log checkout API request or response
 bodies, at any level, in any configuration.
+
+### Internal builds
+
+`GLOMO_INTERNAL_BUILD` turns on verbose logging and relaxes the jailbreak/debugger block on
+live keys. The published package never defines it, and `Package.swift` must not read the build
+environment or declare it (a test enforces both). For an internal build, pass it on your own
+command line:
+
+```bash
+swift build -Xswiftc -DGLOMO_INTERNAL_BUILD
+swift test -Xswiftc -DGLOMO_INTERNAL_BUILD
+xcodebuild test -scheme glomo-ios-sdk -destination "platform=iOS Simulator,name=iPhone 16" \
+  OTHER_SWIFT_FLAGS='$(inherited) -DGLOMO_INTERNAL_BUILD'
+```
+
+This is not a security boundary. Whoever compiles source-distributed code can define any
+compilation condition. The flag is reported as `dev_mode` on every Mixpanel and Sentry event, so
+a build with it enabled shows up. Never ship a build with it.
 
 ## 6. Workflow
 

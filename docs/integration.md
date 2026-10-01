@@ -36,7 +36,10 @@ The implementation sends the shared native SDK event contract directly to
 ## Privacy boundary
 
 Analytics is allow-by-contract and sanitized before transport. Email addresses, long bare
-numeric identifiers, PAN, passport, and voter ID patterns are redacted. Property names
+numeric identifiers, PAN, passport, and voter ID patterns are redacted, including inside
+free-text string values. Glomo identifiers (`order_id`, `public_key`, `session_id` and the
+like), values that are wholly a UUID, and device/host-app metadata such as the app version and
+build are passed unchanged. Property names
 associated with customer, card, bank-account, and KYC data are dropped. Main checkout URLs
 drop credentials, query, and fragment data when used as navigation properties. Bank redirect
 events are stricter and retain only `https://hostname`; path, port, credentials, query, and

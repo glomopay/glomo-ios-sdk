@@ -195,24 +195,32 @@ final class ContractCoverageTests: XCTestCase {
         }
     }
 
-    func testEducationCarouselContractMatchesTheHostedPageMessage() {
-        // Built from the page's message shape, not from the field names in any SDK.
-        let message = #"{"event":"lrs.has_education_steps","hasContent":true}"#
-        XCTAssertEqual(EducationCarouselContract.parseAvailabilitySignal(rawMessage: message), true)
-        XCTAssertEqual(
-            EducationCarouselContract.parseAvailabilitySignal(
-                rawMessage: #"{"event":"lrs.has_education_steps","hasContent":false}"#
-            ),
-            false
-        )
-        // The shape Android was reading is not what the page sends.
-        XCTAssertNil(
-            EducationCarouselContract.parseAvailabilitySignal(
-                rawMessage: #"{"type":"lrs.has_education_steps","value":true}"#
-            )
-        )
-        XCTAssertNil(EducationCarouselContract.parseAvailabilitySignal(rawMessage: "not-json"))
-        XCTAssertNil(EducationCarouselContract.availabilitySignal(["event": "other", "hasContent": true]))
+    func testEducationCarouselContractMatchesTheLivePageMessage() {
+        // Exactly what glomopay-checkout posts (lrs-carousel.event-emitter.ts:5), as an object and
+        // as the JSON string the carousel listener forwards.
+        let live: [String: Any] = ["type": "lrs.has_education_steps", "value": true]
+        XCTAssertTrue(EducationCarouselContract.isContentSignal(live))
+        XCTAssertTrue(EducationCarouselContract.isContentSignal(rawMessage: #"{"type":"lrs.has_education_steps","value":true}"#))
+    }
+
+    func testEducationCarouselContractIgnoresEverythingButTheContentSignal() {
+        // The page never emits false; silence means hidden, so false is not a signal either.
+        let notSignals: [[String: Any]] = [
+            ["type": "lrs.has_education_steps", "value": false],
+            ["event": "lrs.has_education_steps", "hasContent": true],
+            ["type": "lrs.has_education_steps", "value": 1],
+            ["type": "lrs.has_education_steps", "value": "true"],
+            ["type": "lrs.has_education_steps"],
+            ["type": "other", "value": true],
+            [:],
+        ]
+        for message in notSignals {
+            XCTAssertFalse(EducationCarouselContract.isContentSignal(message), "\(message)")
+        }
+        for raw in ["not-json", "", "[]", "true", #"{"type":"lrs.has_education_steps","value":"true"}"#,
+                    #"{"event":"lrs.has_education_steps","hasContent":true}"#] {
+            XCTAssertFalse(EducationCarouselContract.isContentSignal(rawMessage: raw), raw)
+        }
     }
 
     func testEducationCarouselLayoutMatchesFlutterProportions() {
@@ -227,7 +235,7 @@ final class ContractCoverageTests: XCTestCase {
         // A fixed bar when hidden: a percentage would give a different height per screen size.
         for hidden in [
             EducationCarouselContract.layout(state: .pending, isLRSOrder: true, isSubscription: false),
-            EducationCarouselContract.layout(state: .noContent, isLRSOrder: true, isSubscription: false),
+            EducationCarouselContract.layout(state: .failed, isLRSOrder: true, isSubscription: false),
             EducationCarouselContract.layout(state: .hasContent, isLRSOrder: false, isSubscription: false),
             EducationCarouselContract.layout(state: .hasContent, isLRSOrder: true, isSubscription: true),
         ] {
@@ -248,10 +256,6 @@ final class ContractCoverageTests: XCTestCase {
         XCTAssertTrue(GlomoPayInjectionScripts.main.contains("bridge.ready"))
         XCTAssertFalse(GlomoPayInjectionScripts.flow.contains("bridge.ready"))
 
-        XCTAssertTrue(GlomoPayInjectionScripts.carousel().contains("lrs.has_education_steps"))
-        XCTAssertTrue(GlomoPayInjectionScripts.carousel().contains("hasContent"))
-        XCTAssertTrue(GlomoPayInjectionScripts.carouselFallback().contains("3000"))
-        XCTAssertTrue(GlomoPayInjectionScripts.carouselFallback().contains("__glomoCarouselStateSent__"))
     }
 
     func testCarouselURLCarriesProductAndSurface() throws {

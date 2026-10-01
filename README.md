@@ -2,11 +2,11 @@
 
 Native Swift implementation of the GlomoPay checkout SDK. The public contract is intentionally aligned with the Flutter and Kotlin SDKs.
 
-Current release: `0.0.1`
+Current release: `1.0.0`
 
 ## Installation with Swift Package Manager
 
-Add the Git repository URL in Xcode and select the `0.0.1` release tag:
+Add the Git repository URL in Xcode and select the `v1.0.0` release tag:
 
 ```text
 https://github.com/glomopay/glomo-ios-sdk.git
@@ -66,10 +66,11 @@ should open such URLs through `UIApplication` is a separate product decision.
 ### LRS education carousel
 
 For LRS orders the overlay shows a 5% back bar and a 15% education strip above the bank page,
-loaded from the hosted carousel. The strip appears only when the page reports
-`{ event: 'lrs.has_education_steps', hasContent: true }`; a 3-second DOM poll covers pages that
-render content without announcing it. When there is nothing to show, the bar is a fixed 48pt and
-the bank page takes the rest.
+loaded from the hosted carousel. The strip appears only when the page posts
+`{ type: 'lrs.has_education_steps', value: true }`, which it sends only when it has content.
+Silence, `value: false` or any other shape leaves it hidden, matching React Native; there is no
+DOM-polling fallback. When there is nothing to show, the bar is a fixed 48pt and the bank page
+takes the rest.
 
 ### Payment outcomes and journeys
 
@@ -135,11 +136,16 @@ destroy a 3DS session mid-redirect.
 
 ### Developer flag
 
-There is no merchant-settable `devMode`. For an SDK-controlled SwiftPM build,
-`GLOMO_INTERNAL_BUILD=true` at package resolution defines the compile condition. The flag
-relaxes the jailbreak/debugger block, enables verbose logging, and rides on every analytics event
-as `dev_mode` so an internal build is detectable. It does not gate analytics or error reporting,
-which are decided by Mixpanel token and Sentry DSN presence alone.
+There is no merchant-settable `devMode`. The published package never defines the internal-build
+compilation condition `GLOMO_INTERNAL_BUILD`, and `Package.swift` reads nothing from the build
+environment. Glomo's internal builds pass it explicitly on the command line (see
+[CONTRIBUTING.md](CONTRIBUTING.md#internal-builds)). The flag relaxes the jailbreak/debugger block
+and enables verbose logging.
+
+It is not a security boundary: the SDK is source-distributed, and whoever compiles it can define
+any compilation condition. It is reported as `dev_mode` on every Mixpanel and Sentry event, so a
+build that enables it shows up. It does not gate analytics or error reporting, which are decided
+by Mixpanel token and Sentry DSN presence alone.
 
 ### User-facing strings
 
@@ -197,10 +203,22 @@ See the [sample app guide](SampleApp/README.md) for run and optional analytics c
 
 ## Release versioning
 
-Keep the same version in `CHANGELOG.md` and the Git release tag. For version `0.0.1`:
+Swift Package Manager takes the package version from the Git tag, so there is no version
+field in `Package.swift`. The SDK's own version string lives in `GlomoPaySDKBuild.version`
+(`Sources/GlomoPaySDK/Analytics/AnalyticsTracker.swift`) and is what Mixpanel and Sentry
+report; it is not derived from the tag, so it must be updated by hand in the same commit.
+Keep `GlomoPaySDKBuild.version`, `CHANGELOG.md`, and the Git release tag in step. For
+version `1.0.0`:
 
-Generate the SDK-owned telemetry resource from the release environment before creating the
-tag. The script also accepts `MIXPANEL_TOKEN` and `SENTRY_DSN` aliases:
+There is no separate publish step. Swift Package Manager resolves the package directly from
+this repository, so the tag on `main` is the release. Everything a merchant compiles must
+therefore already be in the commit being tagged, which means the version bump and the
+telemetry resource below both belong in the release pull request, not in a step performed at
+tag time.
+
+If the release environment's values have changed, regenerate the SDK-owned telemetry resource
+in the release branch so the update is part of the merge commit. The script also accepts
+`MIXPANEL_TOKEN` and `SENTRY_DSN` aliases:
 
 ```bash
 GLOMOPAY_MIXPANEL_TOKEN="$MIXPANEL_TOKEN" \
@@ -210,10 +228,15 @@ GLOMOPAY_SENTRY_DSN="$SENTRY_DSN" \
 
 Confirm that `Sources/GlomoPaySDK/Resources/GlomoPayTelemetryConfiguration.plist` contains
 the release values. Because Swift Package Manager distributes this repository's tagged source,
-the generated resource must be included in the release tag. Never place a Sentry auth token or
-symbol-upload credential in this file.
+the generated resource must be included in the release tag. Both values are client-side
+credentials and are visible to anyone who can resolve the package. Never place a Sentry auth
+token or symbol-upload credential in this file.
+
+After the release pull request is merged, tag the merge commit on `main`:
 
 ```bash
-git tag 0.0.1
-git push origin 0.0.1
+git tag v1.0.0
+git push origin v1.0.0
 ```
+
+Tags are only ever created on `main`, never on a release branch.

@@ -1,10 +1,12 @@
 # Changelog
 
 All notable changes to the GlomoPay iOS SDK are documented here.
+This project follows [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+Starting with 1.0.0, the public API follows Semantic Versioning. Breaking
+public API changes require a new major release.
 
-### Breaking
+## [1.0.0] - 2026-10-01
 
 - Minimum supported iOS is now 16.0 and distribution is Swift Package Manager only. CocoaPods
   metadata and CI are removed.
@@ -20,6 +22,30 @@ All notable changes to the GlomoPay iOS SDK are documented here.
   `autoCloseOnConnectionError` moved onto `GlomoPayConfig`, `startCheckout` now returns a handle,
   and `CheckoutStatus`, `TerminationSource.backButton`, `GlomoPayResult` and
   `GlomoPaySDK.checkoutURL` are gone from the public surface.
+
+### Pre-release fixes
+
+- `Package.swift` no longer reads `GLOMO_INTERNAL_BUILD` from the build environment. SwiftPM
+  evaluates the manifest with the builder's environment, so any build, a merchant's included,
+  could set the variable and relax the jailbreak/debugger block on live keys; the comment
+  claiming otherwise was wrong. The published manifest now reads no environment and defines no
+  compilation conditions, and a test fails if it does either. Internal builds pass
+  `-Xswiftc -DGLOMO_INTERNAL_BUILD` (or `OTHER_SWIFT_FLAGS`) explicitly; see CONTRIBUTING.md. The
+  flag is not a security boundary - whoever compiles source-distributed code can define any
+  condition - and is reported as `dev_mode` on every Mixpanel and Sentry event.
+- Analytics string values are now redacted like every other value. The `String` branch of the
+  sanitiser only truncated, so an email, a 6+ digit number, a PAN or a passport/voter ID inside a
+  free-text property (`error_message`, `failure_reason`, ...) reached Mixpanel, contrary to
+  `docs/integration.md`. Identifier fields (`order_id`, `public_key`, `session_id`, ...), values
+  that are wholly a UUID, and device/host-app metadata (`$app_version_string`,
+  `$app_build_number`, `payment_id`, ...) keep their previous treatment, so the order_id join and
+  host-app version segmentation are unchanged.
+- The LRS education carousel now reads the hosted page's actual contract,
+  `{ type: 'lrs.has_education_steps', value: true }`, which the page sends only when it has
+  content. The SDK was reading `{ event, hasContent }`, which the page never sends, so the
+  carousel never appeared on signal. It is now shown only on that message; `value: false`, other
+  shapes and silence leave it hidden, matching React Native. The DOM-polling fallback that guessed
+  from rendered text is removed, and `Education Steps Shown` fires on the signal.
 
 ### Flutter v2 parity
 
@@ -94,8 +120,9 @@ All notable changes to the GlomoPay iOS SDK are documented here.
 - `autoCloseOnConnectionError` moved to `GlomoPayConfig`. It was a property on the checkout view
   controller, which `startCheckout` constructs internally and never exposes, so no merchant
   integrating from the README could reach it.
-- Replaced merchant-settable `devMode` with the compile-time `GLOMO_INTERNAL_BUILD` flag resolved
-  by `Package.swift` for SDK-controlled internal builds. `devMode: true`
+- Replaced merchant-settable `devMode` with the compile-time `GLOMO_INTERNAL_BUILD` condition,
+  which internal builds pass on the command line and the published package never defines.
+  `devMode: true`
   with a live key used to skip the jailbreak and debugger block entirely, and the sample app
   shipped it enabled by default.
   `GlomoPayLogger.devMode` was a public `static var` any merchant could set process-wide while the

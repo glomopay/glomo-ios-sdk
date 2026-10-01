@@ -1,19 +1,20 @@
 import Foundation
 
-/// Advanced build flags. There is no merchant-facing way to set any of them.
+/// Build flags. There is no runtime or configuration API for any of them.
 enum SDKBuildFlags {
     /// Enables verbose logging and relaxes the jailbroken/debugger device block on live
     /// checkouts, so it must never be set on a build that ships to merchants.
     ///
-    /// There is no baked-in value to override: absent means false, and only the compile-time
-    /// definition of `GLOMO_INTERNAL_BUILD` turns it on, so a typo or a missing flag both fail
-    /// closed. The SDK is source-distributed through Swift Package Manager, so the flag is
-    /// compiled from the Glomo-controlled manifest - a merchant cannot set it without editing the
-    /// package manifest.
+    /// It is on only when the Swift compilation condition `GLOMO_INTERNAL_BUILD` is defined, and
+    /// the published package never defines it: `Package.swift` reads nothing from the build
+    /// environment and declares no conditions. Glomo's internal builds pass it explicitly, e.g.
+    /// `swift test -Xswiftc -DGLOMO_INTERNAL_BUILD`.
     ///
-    /// It rides on every analytics event as `dev_mode`, which is how a build that shipped with it
-    /// enabled is detected after the fact. It must never gate analytics or error reporting:
-    /// those are decided by Mixpanel token and Sentry DSN presence alone.
+    /// This is not a security boundary. The SDK is source-distributed, and whoever compiles it
+    /// can define any condition, this one included. What keeps it honest is visibility: it is
+    /// reported as `dev_mode` on every Mixpanel event and every Sentry event, so a build that
+    /// enables it shows up. It must never gate analytics or error reporting: those are decided by
+    /// Mixpanel token and Sentry DSN presence alone.
     #if GLOMO_INTERNAL_BUILD
     static let internalBuild = true
     #else

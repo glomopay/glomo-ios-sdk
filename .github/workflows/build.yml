@@ -37,7 +37,7 @@ jobs:
           swift test -v | tee "$RUNNER_TEMP/spm-tests.log"
       - name: Upload test diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: spm-test-diagnostics
           path: |
@@ -75,7 +75,7 @@ jobs:
             | tee "$RUNNER_TEMP/ios-tests.log"
       - name: Upload test diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ios-test-diagnostics
           path: |

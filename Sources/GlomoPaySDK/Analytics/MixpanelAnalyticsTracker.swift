@@ -25,6 +25,7 @@ final class MixpanelAnalyticsTracker: AnalyticsTracking {
     private var flowType: String
     private var checkoutURL: URL?
     private var networkSnapshotProperties: [String: Any?] = [:]
+    private var colorSchemeProperties: [String: Any?] = [:]
 
     init(
         config: GlomoPayConfig,
@@ -58,13 +59,28 @@ final class MixpanelAnalyticsTracker: AnalyticsTracking {
         cacheNetworkSnapshot(from: properties)
     }
 
+    func updateColorScheme(colorScheme: String, appColorScheme: String, deviceColorScheme: String) {
+        lock.glomoWithLock {
+            colorSchemeProperties = [
+                "color_scheme": colorScheme,
+                "app_color_scheme": appColorScheme,
+                "device_color_scheme": deviceColorScheme,
+            ]
+        }
+    }
+
     func track(_ event: String, properties: [String: Any?]) {
         errorReporter.addBreadcrumb(category: "analytics", message: event, data: ["event_name": event])
         let date = now()
-        let state = lock.glomoWithLock { (flowType, checkoutURL, networkSnapshotProperties) }
+        let state = lock.glomoWithLock {
+            (flowType, checkoutURL, networkSnapshotProperties, colorSchemeProperties)
+        }
         let analyticsOrderID = config.checkoutId
         var common = deviceProperties()
         common.merge(state.2) { _, snapshotValue in snapshotValue }
+        // Empty until the checkout has resolved a scheme, so absence means it had not got that
+        // far - where an invented "light" would read as a scheme we actually sent.
+        common.merge(state.3) { _, new in new }
         common.merge([
             "sdk_version": sdkVersion,
             "sdk_source": "glomo-ios-sdk",

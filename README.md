@@ -126,6 +126,51 @@ difference between the two counts is not a failure rate.
 failures marked as closing: an advisory timeout, a cancelled navigation and an unmapped WebKit
 failure all show the retry surface instead.
 
+### Dark mode
+
+`GlomoPayConfig.appColorScheme` tells the Glomo checkout page which scheme to present. It defaults
+to `.auto`.
+
+```swift
+let config = GlomoPayConfig(
+    publicKey: "test_public_key",
+    orderId: "order_example",
+    appColorScheme: .auto // .auto | .light | .dark
+)
+```
+
+**It requests a scheme, it does not force one.** The page decides, against your merchant dashboard
+settings. Setting `.dark` does not guarantee a dark checkout.
+
+**What `.auto` resolves to here.** The checkout's own trait collection, so an app that sets
+`overrideUserInterfaceStyle` gets what it set rather than what the device is on. What `.auto`
+derives from is a per-platform decision and differs across the Glomo SDKs; only `.light` and
+`.dark` mean the same thing everywhere.
+
+**Changing it mid-checkout is supported**, through the handle:
+
+```swift
+let handle = GlomoPaySDK.shared.startCheckout(from: self, config: config, listener: self)
+// later, without dismissing and re-presenting
+handle.setColorScheme(.dark)
+```
+
+The page is told through the bridge rather than by reloading it, so a payment in flight survives
+the change. Do not dismiss and re-present the checkout to change the scheme. A host appearance
+change reaches an open checkout on its own while the scheme is `.auto`; nothing is needed from the
+host for that.
+
+**`WKWebView` has no algorithmic darkening to switch off**, so there is no iOS counterpart to the
+Android setting. The iOS-specific concern is the opposite one: `WKWebView` reports
+`prefers-color-scheme` from its trait collection, which inherits the host app. Every WebView the
+SDK renders - including bank and 3DS pages - therefore has its `overrideUserInterfaceStyle` pinned
+to the scheme the checkout resolved, so a page told `dark` cannot still match
+`prefers-color-scheme: light` in its own CSS and render half of each.
+
+**Three names, one concept.** The property is `appColorScheme`, the URL parameter the page reads is
+`colorScheme`, and the page hook the SDK calls is `window.glomoSetColorScheme`. The wire names were
+not renamed along with the property.
+
 ### Session isolation
 
 The checkout's WebViews share one `WKWebsiteDataStore.nonPersistent()` store - shared because the

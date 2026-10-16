@@ -99,6 +99,37 @@ enum GlomoPayInjectionScripts {
         "window.__glomoDevMode__ = \(devMode ? "true" : "false");"
     }
 
+    /// Hands the resolved colour scheme to the page, and evaluates to whether it took.
+    ///
+    /// Guards the *function*, not `window`: in a WebView `window` always exists and it is the
+    /// setter that is absent - during load, or on a merchant deploy that predates it - so
+    /// `window?.glomoSetColorScheme(...)` would throw where this skips. `__glomoColorScheme__` is
+    /// parked unconditionally so a change landing before the page defines its setter is still
+    /// readable; nothing reads it yet.
+    ///
+    /// The IIFE returns the result, so `evaluateJavaScript` reads back whether the call took in
+    /// the same round trip - and without the race a separate read-back would have, where a page
+    /// defining its setter a moment later turns a miss into a hit. `true` means the setter existed
+    /// *and* returned without throwing.
+    ///
+    /// Deliberately not idempotent, unlike the injections around it. This one runs at document
+    /// start on every load and again on every scheme change.
+    static func colorScheme(_ resolved: ResolvedColorScheme) -> String {
+        """
+        (function() {
+          var applied = false;
+          try {
+            window.__glomoColorScheme__ = '\(resolved.wireName)';
+            if (typeof window.glomoSetColorScheme === 'function') {
+              window.glomoSetColorScheme('\(resolved.wireName)');
+              applied = true;
+            }
+          } catch (e) {}
+          return applied;
+        })();
+        """
+    }
+
     static let credentialedRequestsFix = """
     (function() {
       if (window.__glomoIOSCredentialedRequestsFix__) return;

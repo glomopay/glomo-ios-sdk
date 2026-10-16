@@ -5,6 +5,14 @@ protocol AnalyticsTracking: AnyObject {
     func updateFlowType(_ flowType: String)
     func updateCheckoutURL(_ url: URL)
     func updateNetworkSnapshotProperties(_ properties: [String: Any?])
+
+    /// Records what the colour scheme resolved to, what the merchant asked for, and what the
+    /// host's appearance was.
+    ///
+    /// All three, because `color_scheme: dark` alone cannot tell a merchant who asked for dark
+    /// from one on `auto` whose host app was dark - two very different conversations when a report
+    /// comes in. Rides every event, like the other contextual properties on this protocol.
+    func updateColorScheme(colorScheme: String, appColorScheme: String, deviceColorScheme: String)
 }
 
 extension AnalyticsTracking {
@@ -13,6 +21,8 @@ extension AnalyticsTracking {
     }
 
     func updateNetworkSnapshotProperties(_ properties: [String: Any?]) {}
+
+    func updateColorScheme(colorScheme: String, appColorScheme: String, deviceColorScheme: String) {}
 }
 
 final class NoOpAnalyticsTracker: AnalyticsTracking {
@@ -73,6 +83,10 @@ enum AnalyticsEventName {
     static let iOSDocumentRetry = "iOS Document Retry"
     static let consoleLogCaptured = "Console Log Captured"
     static let unsupportedFunctionalityUsed = "Unsupported Functionality Used"
+
+    /// The colour scheme changed during a live checkout and was pushed to the pages. Not emitted
+    /// for the scheme the checkout opened with - that rides `color_scheme` on every event already.
+    static let colorSchemeChanged = "Checkout Color Scheme Changed"
 }
 
 enum GlomoPaySDKBuild {

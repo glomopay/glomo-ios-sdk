@@ -77,6 +77,21 @@ final class ContractCoverageTests: XCTestCase {
         XCTAssertEqual(query["mode"], "mock")
     }
 
+    func testCheckoutURLCarriesTheJourneyIDOnlyWhenOneIsGiven() throws {
+        let config = GlomoPayConfig(publicKey: "test_public_key", orderId: "order_123456")
+        let journeyID = "01d245ac-f936-4545-9013-7114243e312f"
+        let journeyIDs: (URL?) -> [String?] = { url in
+            url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?
+                .queryItems?.filter { $0.name == "journeyId" }.map(\.value) ?? []
+        }
+
+        XCTAssertEqual(journeyIDs(ConfigManager.getCheckoutURL(config, journeyID: journeyID)), [journeyID])
+        XCTAssertEqual(journeyIDs(ConfigManager.getCheckoutURL(config, orderType: "lrs", journeyID: journeyID)), [journeyID])
+        XCTAssertEqual(journeyIDs(ConfigManager.getCheckoutURL(config)), [])
+        XCTAssertEqual(journeyIDs(ConfigManager.getCheckoutURL(config, journeyID: "")), [])
+        XCTAssertEqual(journeyIDs(ConfigManager.getCarouselURL(config)), [])
+    }
+
     func testCustomServerGetsTrailingSlashAndLRSUsesItsHost() throws {
         let config = GlomoPayConfig(publicKey: "live_public_key", orderId: "order_123456", server: "https://merchant.example/checkout")
 

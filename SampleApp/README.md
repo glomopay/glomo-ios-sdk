@@ -13,3 +13,5 @@ This SwiftUI sample app demonstrates a local integration of the GlomoPay iOS SDK
 The project uses the SDK package from the repository root through the local package path `..`.
 
 Mixpanel and Sentry client configuration is owned by the SDK. The sample app does not require telemetry keys in its `Info.plist` or Xcode build settings.
+
+To send the sample app's analytics to the Mixpanel staging project instead of production, add `GLOMOPAY_MIXPANEL_TOKEN` with the staging project's token under **Edit Scheme > Run > Arguments > Environment Variables**. Without it, events go to the production project bundled with the SDK.

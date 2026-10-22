@@ -3,8 +3,10 @@ import Foundation
 enum AnalyticsSanitizer {
     private static let identifierKeys: Set<String> = [
         "session_id",
+        "journey_id",
         "$insert_id",
         "distinct_id",
+        "$device_id",
         "order_id",
         "subscription_id",
         "public_key",

@@ -21,11 +21,16 @@ unchanged.
 The implementation sends the shared native SDK event contract directly to
 `https://api.mixpanel.com/track?ip=1` using an ephemeral `URLSession`:
 
-- `distinct_id` is the order ID, or the subscription ID for subscription checkouts.
-- `session_id` is a UUID generated once per checkout invocation.
+- `session_id` is a lowercase UUID generated once per checkout invocation. The same value is
+  sent as `journey_id` and `$device_id`, and appended to the checkout URL as `journeyId`.
+- `distinct_id` is `$device:<journey_id>`. Every event is anonymous; the SDK never identifies
+  a user.
 - `sdk_source`, `platform`, and `surface` are `glomo-ios-sdk`, `ios`, and `ios-sdk`.
-- Subscription checkouts send their subscription ID as `order_id` and `distinct_id`, while
-  preserving the same value in `subscription_id`.
+- `order_id` is the order ID, or the subscription ID for subscription checkouts, which also
+  keep the same value in `subscription_id`.
+- `sdk_loaded` is sent once per checkout invocation with `integration` set to `ios_sdk`.
+- `$insert_id` is a fresh lowercase UUID on every event, so Mixpanel never deduplicates two
+  distinct events.
 - Requests are asynchronous, have a 10-second timeout, and do not retry.
 - Mixpanel derives coarse location from the request IP. The SDK privacy manifest declares
   coarse location and marks order-associated analytics data as linked to the user.

@@ -23,6 +23,7 @@ final class NoOpAnalyticsTracker: AnalyticsTracking {
 
 enum AnalyticsEventName {
     static let sdkInitialized = "SDK Initialized"
+    static let sdkLoaded = "sdk_loaded"
     static let sdkValidationFailed = "SDK Validation Failed"
     static let deviceComplianceChecked = "Device Compliance Checked"
     static let deviceComplianceBlocked = "Device Compliance Blocked"

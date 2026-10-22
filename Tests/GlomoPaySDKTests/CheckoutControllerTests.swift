@@ -19,7 +19,8 @@ final class CheckoutControllerTests: XCTestCase {
     private func makeController(
         orderType: String = "standard",
         autoClose: Bool = true,
-        listener: GlomoPayListener? = nil
+        listener: GlomoPayListener? = nil,
+        analyticsTransport: AnalyticsTransporting? = nil
     ) -> GlomoPayCheckoutViewController {
         let config = GlomoPayConfig(
             publicKey: "test_public_key",
@@ -31,7 +32,12 @@ final class CheckoutControllerTests: XCTestCase {
             orderType: orderType,
             listener: listener,
             apiClient: nil,
-            telemetryRuntime: telemetryRuntime
+            telemetryRuntime: analyticsTransport.map {
+                SDKTelemetryRuntime(
+                    configuration: .load(environment: [:], bundledValues: [:]),
+                    mixpanelTransport: $0
+                )
+            } ?? telemetryRuntime
         )
         controller.loadViewIfNeeded()
         return controller
@@ -314,6 +320,80 @@ final class CheckoutControllerTests: XCTestCase {
         XCTAssertFalse(labelTexts(in: controller.view).contains("RAW TECHNICAL MESSAGE"))
     }
 
+    // MARK: - Journey id
+
+    func testSDKLoadedFiresOncePerOpenAndARetryKeepsTheJourneyID() async throws {
+        let listener = RecordingCheckoutListener()
+        let transport = RecordingAnalyticsTransport()
+        let controller = makeController(listener: listener, analyticsTransport: transport)
+
+        controller.beginAppearanceTransition(true, animated: false)
+        controller.endAppearanceTransition()
+        _ = try await transport.waitForEvents(named: AnalyticsEventName.checkoutStarted, count: 1)
+        let url = try XCTUnwrap(controller.currentURL)
+        let journeyID = try XCTUnwrap(checkoutJourneyID(in: url))
+
+        let main = try XCTUnwrap(webViews(in: controller.view).first)
+        controller.webView(
+            main,
+            didFailProvisionalNavigation: nil,
+            withError: NSError(domain: "WKErrorDomain", code: 3, userInfo: nil)
+        )
+        let retry = try XCTUnwrap(button(titled: GlomoPayStrings.retry, in: controller.view))
+        for action in try XCTUnwrap(retry.actions(forTarget: controller, forControlEvent: .touchUpInside)) {
+            controller.perform(NSSelectorFromString(action), with: retry)
+        }
+        let starts = try await transport.waitForEvents(named: AnalyticsEventName.checkoutStarted, count: 2)
+        let loaded = await transport.allEvents(named: AnalyticsEventName.sdkLoaded)
+        let resolved = try await transport.waitForEvents(named: AnalyticsEventName.checkoutURLResolved, count: 1)
+
+        XCTAssertEqual(controller.currentURL, url)
+        for value in [resolved.first?.jsonProperties["url"], starts.first?.jsonProperties["checkout_url"]] {
+            let loggedURL = try XCTUnwrap(value as? String)
+            XCTAssertFalse(loggedURL.contains("?"))
+            XCTAssertFalse(loggedURL.contains("journeyId"))
+        }
+        XCTAssertEqual(journeyID, journeyID.lowercased())
+        XCTAssertNotNil(UUID(uuidString: journeyID))
+        XCTAssertEqual(loaded.count, 1)
+        let properties = try XCTUnwrap(loaded.first).jsonProperties
+        XCTAssertEqual(properties["integration"] as? String, "ios_sdk")
+        XCTAssertEqual(properties["sdk_version"] as? String, GlomoPaySDKBuild.version)
+        XCTAssertEqual(properties["platform"] as? String, "ios")
+        XCTAssertEqual(properties["$os"] as? String, "iOS")
+        XCTAssertNotNil(properties["$os_version"] as? String)
+        XCTAssertNotNil(properties["$model"] as? String)
+        XCTAssertEqual(properties["journey_id"] as? String, journeyID)
+        for event in starts + loaded {
+            XCTAssertEqual(event.jsonProperties["journey_id"] as? String, journeyID)
+            XCTAssertEqual(event.jsonProperties["$device_id"] as? String, journeyID)
+            XCTAssertEqual(event.jsonProperties["distinct_id"] as? String, "$device:\(journeyID)")
+            XCTAssertEqual(event.jsonProperties["order_id"] as? String, "order_123456")
+        }
+    }
+
+    func testEachOpenGetsItsOwnJourneyID() async throws {
+        let firstTransport = RecordingAnalyticsTransport()
+        let secondTransport = RecordingAnalyticsTransport()
+        let first = makeController(analyticsTransport: firstTransport)
+        let second = makeController(analyticsTransport: secondTransport)
+
+        for controller in [first, second] {
+            controller.beginAppearanceTransition(true, animated: false)
+            controller.endAppearanceTransition()
+        }
+        _ = try await firstTransport.waitForEvents(named: AnalyticsEventName.checkoutStarted, count: 1)
+        _ = try await secondTransport.waitForEvents(named: AnalyticsEventName.checkoutStarted, count: 1)
+        let firstLoaded = try await firstTransport.waitForEvents(named: AnalyticsEventName.sdkLoaded, count: 1)
+        let secondLoaded = try await secondTransport.waitForEvents(named: AnalyticsEventName.sdkLoaded, count: 1)
+        let firstID = try XCTUnwrap(checkoutJourneyID(in: first.currentURL))
+        let secondID = try XCTUnwrap(checkoutJourneyID(in: second.currentURL))
+
+        XCTAssertNotEqual(firstID, secondID)
+        XCTAssertEqual(firstLoaded.map { $0.jsonProperties["journey_id"] as? String }, [firstID])
+        XCTAssertEqual(secondLoaded.map { $0.jsonProperties["journey_id"] as? String }, [secondID])
+    }
+
     // MARK: - Order-type detection
 
     func testOrderFetchTimeoutTerminatesWithoutOpeningAnyCheckout() async {
@@ -371,6 +451,11 @@ final class CheckoutControllerTests: XCTestCase {
         XCTAssertTrue(listener.connectionErrors.isEmpty)
         XCTAssertEqual(listener.errors.first?.type, .networkError)
         XCTAssertNil(webViews(in: controller.view).first?.url)
+    }
+
+    private func checkoutJourneyID(in url: URL?) -> String? {
+        url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?
+            .queryItems?.first { $0.name == "journeyId" }?.value
     }
 
     // MARK: - View-hierarchy helpers

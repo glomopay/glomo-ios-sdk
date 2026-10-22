@@ -13,13 +13,21 @@ public enum ConfigManager {
     }
 
     public static func getCheckoutURL(_ config: GlomoPayConfig, orderType: String = "standard") -> URL? {
+        getCheckoutURL(config, orderType: orderType, journeyID: nil)
+    }
+
+    static func getCheckoutURL(_ config: GlomoPayConfig, orderType: String = "standard", journeyID: String?) -> URL? {
         guard let baseURL = getBaseURL(config, orderType: orderType),
               var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else { return nil }
-        components.queryItems = [
+        var queryItems = [
             URLQueryItem(name: "orderId", value: config.checkoutId ?? ""),
             URLQueryItem(name: "publicKey", value: config.publicKey),
             URLQueryItem(name: "mode", value: getMode(config.publicKey)),
         ]
+        if let journeyID, !journeyID.isEmpty {
+            queryItems.append(URLQueryItem(name: "journeyId", value: journeyID))
+        }
+        components.queryItems = queryItems
         return components.url
     }
 

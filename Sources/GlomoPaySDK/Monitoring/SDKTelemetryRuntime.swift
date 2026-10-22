@@ -10,17 +10,19 @@ final class SDKTelemetryRuntime: @unchecked Sendable {
 
     let configuration: SDKRuntimeConfiguration
     let sentryClient: SentryEnvelopeClient?
-    let mixpanelTransport: MixpanelHTTPTransport?
+    let mixpanelTransport: AnalyticsTransporting?
 
     init(
         configuration: SDKRuntimeConfiguration,
-        sentrySessionConfiguration: URLSessionConfiguration = SentryEnvelopeClient.defaultSessionConfiguration()
+        sentrySessionConfiguration: URLSessionConfiguration = SentryEnvelopeClient.defaultSessionConfiguration(),
+        mixpanelTransport: AnalyticsTransporting? = nil
     ) {
         self.configuration = configuration
         self.sentryClient = configuration.sentryDSN.flatMap {
             SentryEnvelopeClient(dsn: $0, sessionConfiguration: sentrySessionConfiguration)
         }
-        self.mixpanelTransport = configuration.mixpanelToken.map { MixpanelHTTPTransport(token: $0) }
+        self.mixpanelTransport = mixpanelTransport
+            ?? configuration.mixpanelToken.map { MixpanelHTTPTransport(token: $0) }
     }
 
     static func prepared() async -> SDKTelemetryRuntime {

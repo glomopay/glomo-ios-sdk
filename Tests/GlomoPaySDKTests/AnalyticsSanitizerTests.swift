@@ -30,6 +30,19 @@ final class AnalyticsSanitizerTests: XCTestCase {
         XCTAssertEqual(output["distinct_id"] as? String, uuid)
     }
 
+    func testJourneyIdentityFieldsLeaveTheSanitizerUnchanged() {
+        let uuid = "01d245ac-f936-4545-9013-7114243e312f"
+        let output = AnalyticsSanitizer.properties([
+            "journey_id": uuid,
+            "$device_id": uuid,
+            "distinct_id": "$device:\(uuid)",
+        ])
+
+        XCTAssertEqual(output["journey_id"] as? String, uuid)
+        XCTAssertEqual(output["$device_id"] as? String, uuid)
+        XCTAssertEqual(output["distinct_id"] as? String, "$device:\(uuid)")
+    }
+
     func testStructuredSensitiveWholeValuesAreDroppedInsteadOfRewritten() {
         let output = AnalyticsSanitizer.properties([
             "value_one": "user@example.com",

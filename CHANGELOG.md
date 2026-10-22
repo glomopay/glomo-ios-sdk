@@ -6,6 +6,12 @@ This project follows [Semantic Versioning](https://semver.org/).
 Starting with 1.0.0, the public API follows Semantic Versioning. Breaking
 public API changes require a new major release.
 
+## [Unreleased]
+
+- Analytics events now carry `journey_id`, and the anonymous Mixpanel identity is now the per-open
+  journey id (`$device:<journey_id>`) instead of `order_id`. A new `sdk_loaded` event marks each
+  checkout open.
+
 ## [1.0.0] - 2026-10-01
 
 - Minimum supported iOS is now 16.0 and distribution is Swift Package Manager only. CocoaPods
@@ -101,8 +107,8 @@ public API changes require a new major release.
   A rejected URL is captured rather than dropped silently.
 - `NSURLErrorCancelled` is no longer reported as a connection error. WebKit delivers it routinely
   - superseded provisional navigations, client-side redirects, `stopLoading()` - and with
-  auto-close on it terminated live checkouts for a non-event. `closeFlow()` now clears the
-  navigation delegate before `stopLoading()`.
+    auto-close on it terminated live checkouts for a non-event. `closeFlow()` now clears the
+    navigation delegate before `stopLoading()`.
 - `shouldAutoClose` is decided from the mapped error type instead of the sign of the error code.
   Every `NSURLErrorDomain` code is negative and every `WKErrorDomain` code is positive, so the
   old rule closed on all unmapped iOS errors and exempted genuine WebKit failures.

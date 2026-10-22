@@ -152,7 +152,7 @@ derives from is a per-platform decision and differs across the Glomo SDKs; only 
 ```swift
 let handle = GlomoPaySDK.shared.startCheckout(from: self, config: config, listener: self)
 // later, without dismissing and re-presenting
-handle.setColorScheme(.dark)
+handle.setAppColorScheme(.dark)
 ```
 
 The page is told through the bridge rather than by reloading it, so a payment in flight survives
@@ -162,10 +162,14 @@ host for that.
 
 **`WKWebView` has no algorithmic darkening to switch off**, so there is no iOS counterpart to the
 Android setting. The iOS-specific concern is the opposite one: `WKWebView` reports
-`prefers-color-scheme` from its trait collection, which inherits the host app. Every WebView the
-SDK renders - including bank and 3DS pages - therefore has its `overrideUserInterfaceStyle` pinned
-to the scheme the checkout resolved, so a page told `dark` cannot still match
-`prefers-color-scheme: light` in its own CSS and render half of each.
+`prefers-color-scheme` from its trait collection, which inherits the host app. The checkout and
+carousel WebViews therefore have their `overrideUserInterfaceStyle` pinned to the scheme the
+checkout resolved, so a page told `dark` cannot still match `prefers-color-scheme: light` in its
+own CSS and render half of each.
+
+The bank and 3DS WebView is deliberately left alone. The SDK sends it no scheme - it is the bank's
+page, not ours - and pinning its appearance would let a merchant on `.dark` darken it even where
+the merchant's own dark-mode setting is off.
 
 **Three names, one concept.** The property is `appColorScheme`, the URL parameter the page reads is
 `colorScheme`, and the page hook the SDK calls is `window.glomoSetColorScheme`. The wire names were

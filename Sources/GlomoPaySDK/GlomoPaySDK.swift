@@ -100,8 +100,8 @@ public final class GlomoPayCheckoutHandle {
     /// call made before the checkout has been presented, or after it has finished, is dropped -
     /// unlike ``close()``, which latches. The URL already carries what the config said, so the
     /// only thing a latched value could do is fight it.
-    public func setColorScheme(_ scheme: GlomoColorScheme) {
-        checkout?.setColorScheme(scheme)
+    public func setAppColorScheme(_ scheme: GlomoColorScheme) {
+        checkout?.setAppColorScheme(scheme)
     }
 }
 #endif

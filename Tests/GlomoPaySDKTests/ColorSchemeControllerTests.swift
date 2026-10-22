@@ -67,19 +67,13 @@ final class ColorSchemeControllerTests: XCTestCase {
     func testAChangeReachesThePageWithoutReloadingIt() throws {
         let controller = makeController(appColorScheme: .light)
         let main = try XCTUnwrap(webViews(in: controller.view).first)
-        var evaluated: [String] = []
-        controller.colorSchemeEvaluator = { webView, script, completion in
-            XCTAssertIdentical(webView, main)
-            evaluated.append(script)
-            completion(true)
-        }
-        // Stands in for the checkout having loaded; the controller only pushes to pages that
-        // have a document, since evaluating into one without would read as a page that refused.
-        controller.didLoadCheckoutDocument = true
+        var evaluated: [(WKWebView, String)] = []
+        controller.scriptEvaluator = { webView, script in evaluated.append((webView, script)) }
 
-        controller.setColorScheme(.dark)
+        controller.setAppColorScheme(.dark)
 
-        XCTAssertEqual(evaluated, [GlomoPayInjectionScripts.colorScheme(.dark)])
+        XCTAssertEqual(evaluated.map(\.1), [GlomoPayInjectionScripts.colorScheme(.dark)])
+        XCTAssertIdentical(evaluated.first?.0, main)
         XCTAssertEqual(main.overrideUserInterfaceStyle, .dark)
         // The live path is the injected setter. A new URL would reload the document and lose the
         // payment in flight.
@@ -89,69 +83,42 @@ final class ColorSchemeControllerTests: XCTestCase {
     func testAChangeToTheSameResolvedSchemeIsANoOp() throws {
         let controller = makeController(appColorScheme: .auto, hostStyle: .dark)
         var evaluated: [String] = []
-        controller.colorSchemeEvaluator = { _, script, completion in
-            evaluated.append(script)
-            completion(true)
-        }
-        controller.didLoadCheckoutDocument = true
+        controller.scriptEvaluator = { _, script in evaluated.append(script) }
 
         // auto already resolved to dark, so pinning dark is not a change.
-        controller.setColorScheme(.dark)
+        controller.setAppColorScheme(.dark)
 
         XCTAssertTrue(evaluated.isEmpty)
     }
 
-    func testNothingIsPushedBeforeThePageHasLoaded() throws {
-        let controller = makeController(appColorScheme: .light)
-        var evaluated: [String] = []
-        controller.colorSchemeEvaluator = { _, script, completion in
-            evaluated.append(script)
-            completion(true)
-        }
-
-        controller.setColorScheme(.dark)
-
-        // The URL carries the scheme at mount, so there is nothing to push yet - and evaluating
-        // into a WebView with no document would be reported as a page that refused.
-        XCTAssertTrue(evaluated.isEmpty)
-    }
-
-    func testTheBankPageIsNeverSentAScheme() throws {
+    func testTheBankPageIsNeitherSentASchemeNorRestyled() throws {
         let controller = makeController(appColorScheme: .light)
         let main = try XCTUnwrap(webViews(in: controller.view).first)
         controller.eventRouter.handle(envelope: ["type": "window.open", "url": "https://bank.example/3ds"])
         let flow = try XCTUnwrap(webViews(in: controller.view).first { $0 !== main })
+        let flowStyleBefore = flow.overrideUserInterfaceStyle
         var targets: [WKWebView] = []
-        controller.colorSchemeEvaluator = { webView, _, completion in
-            targets.append(webView)
-            completion(true)
-        }
-        controller.didLoadCheckoutDocument = true
+        controller.scriptEvaluator = { webView, _ in targets.append(webView) }
 
-        controller.setColorScheme(.dark)
+        controller.setAppColorScheme(.dark)
 
         // The main WebView was pushed to, so an empty flow result means excluded rather than
         // nothing having happened at all.
         XCTAssertEqual(targets, [main])
-        XCTAssertFalse(targets.contains(flow))
-        // Its reported appearance is still pinned with the others, so the platform cannot tell a
-        // bank page something that disagrees with the checkout it was opened from.
-        XCTAssertEqual(flow.overrideUserInterfaceStyle, .dark)
+        // And its appearance is left exactly as it was: pinning it would let a merchant on `.dark`
+        // darken the bank's own 3DS page, which is not gated on the merchant's dark-mode flag the
+        // way the checkout page is.
+        XCTAssertEqual(flow.overrideUserInterfaceStyle, flowStyleBefore)
     }
 
     func testTheHandleForwardsToTheCheckout() throws {
         let controller = makeController(appColorScheme: .light)
-        let main = try XCTUnwrap(webViews(in: controller.view).first)
         let handle = GlomoPayCheckoutHandle()
         handle.attach(controller)
         var evaluated: [String] = []
-        controller.colorSchemeEvaluator = { _, script, completion in
-            evaluated.append(script)
-            completion(true)
-        }
-        controller.didLoadCheckoutDocument = true
+        controller.scriptEvaluator = { _, script in evaluated.append(script) }
 
-        handle.setColorScheme(.dark)
+        handle.setAppColorScheme(.dark)
 
         XCTAssertEqual(evaluated, [GlomoPayInjectionScripts.colorScheme(.dark)])
     }

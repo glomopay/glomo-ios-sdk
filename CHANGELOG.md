@@ -15,7 +15,7 @@ public API changes require a new major release.
   your merchant dashboard settings. `.auto` follows the checkout's own trait collection, so an app
   that sets `overrideUserInterfaceStyle` gets what it set. The parameter is defaulted and goes
   last, so existing `GlomoPayConfig` call sites compile unchanged.
-- `GlomoPayCheckoutHandle.setColorScheme(_:)` changes the scheme of a checkout that is already
+- `GlomoPayCheckoutHandle.setAppColorScheme(_:)` changes the scheme of a checkout that is already
   presented. The page is told through the bridge rather than reloaded, so a payment in flight
   survives the change. A host appearance change reaches an open checkout on its own while the
   scheme is `.auto`.
@@ -23,11 +23,12 @@ public API changes require a new major release.
 
 ### Changed
 
-- Every WebView the SDK renders, including bank and 3DS pages, now has its
-  `overrideUserInterfaceStyle` pinned to the scheme the checkout resolved. `WKWebView` reports
-  `prefers-color-scheme` from its trait collection, which inherits the host app, so without this a
-  page told `dark` would still match `prefers-color-scheme: light` in its own CSS whenever the
-  host app was light. Nothing to configure.
+- The checkout and carousel WebViews now have their `overrideUserInterfaceStyle` pinned to the
+  scheme the checkout resolved. `WKWebView` reports `prefers-color-scheme` from its trait
+  collection, which inherits the host app, so without this a page told `dark` would still match
+  `prefers-color-scheme: light` in its own CSS whenever the host app was light. The bank and 3DS
+  WebView is unchanged: it is sent no scheme and its appearance is not pinned. Nothing to
+  configure.
 - Improved SDK diagnostics around checkout appearance.
 
 ## [1.0.0] - 2026-10-01

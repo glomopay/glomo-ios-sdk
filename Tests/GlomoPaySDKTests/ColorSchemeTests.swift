@@ -19,6 +19,14 @@ final class ColorSchemeResolutionTests: XCTestCase {
         XCTAssertEqual(GlomoColorScheme.auto.resolve(hostIsDark: false), .light)
     }
 
+    func testALightOnlyAppOnADarkDeviceGetsALightCheckout() {
+        // `hostIsDark` is read off the view controller's own trait collection, which carries the
+        // host's `overrideUserInterfaceStyle`. An app pinned light reports light here even on a
+        // device in dark mode, and that is what the checkout must follow.
+        XCTAssertEqual(GlomoColorScheme.auto.resolve(hostIsDark: false), .light)
+        XCTAssertEqual(GlomoColorScheme.light.resolve(hostIsDark: true), .light)
+    }
+
     func testTheWireVocabularyIsExactlyLightAndDark() {
         XCTAssertEqual(ResolvedColorScheme.light.wireName, "light")
         XCTAssertEqual(ResolvedColorScheme.dark.wireName, "dark")
@@ -87,18 +95,14 @@ final class ColorSchemeInjectionTests: XCTestCase {
         XCTAssertFalse(script.contains("window?."))
     }
 
-    func testItParksTheValueBeforeCalling() {
+    func testItSendsNothingButTheSetterCall() {
+        // No parked global: no page reads one, so it would be a contract with no consumer. No
+        // read-back either - a flag that is true whenever the setter returned says nothing about
+        // whether the page changed, because the page weighs the request against the merchant's
+        // own dashboard settings.
         let script = GlomoPayInjectionScripts.colorScheme(.dark)
-        let beforeCall = script.components(separatedBy: "glomoSetColorScheme(")[0]
-        XCTAssertTrue(beforeCall.contains("window.__glomoColorScheme__ = 'dark';"))
-    }
-
-    func testItEvaluatesToWhetherTheCallTook() {
-        // Read back by evaluateJavaScript, so the applied flag cannot race the page defining its
-        // setter a moment later.
-        let script = GlomoPayInjectionScripts.colorScheme(.dark)
-        XCTAssertTrue(script.contains("return applied;"))
-        XCTAssertTrue(script.contains("applied = true;"))
+        XCTAssertFalse(script.contains("__glomoColorScheme"))
+        XCTAssertFalse(script.contains("return"))
     }
 
     func testItEmitsTheWireVocabulary() {
@@ -107,93 +111,12 @@ final class ColorSchemeInjectionTests: XCTestCase {
     }
 
     func testItHasNoRunOnceGuardUnlikeTheInjectionsAroundIt() {
-        // It is a document-start user script, so it runs on every load, and again on every
-        // change. A guard would pin the page to whatever it saw first.
+        // Re-run on every page load and every change; a guard would pin the page to whatever it
+        // saw first.
         XCTAssertFalse(GlomoPayInjectionScripts.colorScheme(.dark).contains("Injected__"))
     }
 
     func testItCannotThrowIntoThePage() {
         XCTAssertTrue(GlomoPayInjectionScripts.colorScheme(.dark).contains("catch (e) {}"))
-    }
-}
-
-@MainActor
-final class ColorSchemeChangeCollectorTests: XCTestCase {
-    private var applied: [String]?
-    private var unprobed: [String]?
-    private var completions = 0
-
-    private func makeCollector(_ targets: [String]) -> ColorSchemeChangeCollector {
-        ColorSchemeChangeCollector(targets: targets) { [weak self] appliedTargets, unprobedTargets in
-            self?.applied = appliedTargets
-            self?.unprobed = unprobedTargets
-            self?.completions += 1
-        }
-    }
-
-    func testItReportsOnceEveryTargetHasAnswered() {
-        let collector = makeCollector(["main", "carousel"])
-
-        collector.record(target: "main", applied: true)
-        XCTAssertNil(applied)
-
-        collector.record(target: "carousel", applied: false)
-        XCTAssertEqual(applied, ["main"])
-        XCTAssertEqual(unprobed, [])
-    }
-
-    func testAPageThatRefusedIsAMissNotAnUnprobedSurface() {
-        // The distinction is the whole point: a miss is a web-side slip, unprobed is our own
-        // probe failing. Conflating them would let a torn-down WebView read as a site outage.
-        let collector = makeCollector(["main", "carousel"])
-
-        collector.record(target: "main", applied: true)
-        collector.record(target: "carousel", applied: false)
-
-        XCTAssertEqual(applied, ["main"])
-        XCTAssertEqual(unprobed, [])
-    }
-
-    func testATargetThatNeverAnsweredIsUnprobed() {
-        let collector = makeCollector(["main", "carousel"])
-
-        collector.record(target: "main", applied: true)
-        collector.timeOut()
-
-        XCTAssertEqual(applied, ["main"])
-        XCTAssertEqual(unprobed, ["carousel"])
-    }
-
-    func testATimeoutAfterEverythingAnsweredDoesNotReportTwice() {
-        let collector = makeCollector(["main"])
-
-        collector.record(target: "main", applied: true)
-        collector.timeOut()
-
-        XCTAssertEqual(completions, 1)
-    }
-
-    func testALateAnswerAfterReportingIsIgnored() {
-        let collector = makeCollector(["main", "carousel"])
-
-        collector.timeOut()
-        collector.record(target: "main", applied: true)
-
-        XCTAssertEqual(completions, 1)
-        XCTAssertEqual(applied, [])
-        XCTAssertEqual(unprobed, ["main", "carousel"])
-    }
-
-    func testTheReportIsBuiltFromWhatWeAskedNotFromWhatArrived() {
-        // The flow WebView is never a target - it holds the bank's page. If the report were built
-        // from the answers rather than from the target list, a stray answer would put it in the
-        // row and claim we themed a bank page.
-        let collector = makeCollector(["main"])
-
-        collector.record(target: "flow", applied: true)
-        collector.record(target: "main", applied: true)
-
-        XCTAssertEqual(applied, ["main"])
-        XCTAssertEqual(unprobed, [])
     }
 }

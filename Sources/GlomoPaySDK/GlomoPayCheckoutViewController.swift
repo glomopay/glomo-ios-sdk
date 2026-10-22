@@ -55,29 +55,11 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     /// What `config.appColorScheme` currently resolves to. Held so a host appearance change can
     /// be told from a trait change that moved something else - a size class, a rotation.
     private var resolvedColorScheme: ResolvedColorScheme = .light
-    /// Reassigned by ``setColorScheme(_:)``; the rest of the config never changes.
+    /// Reassigned by ``setAppColorScheme(_:)``; the rest of the config never changes.
     private var appColorScheme: GlomoColorScheme
-    private var colorSchemeChange: ColorSchemeChangeCollector?
-    /// Set once the checkout document has been handed to the main WebView.
-    ///
-    /// Gates the colour-scheme push. Evaluating into a WebView with no document fails, and this
-    /// SDK would report that as a page that refused the scheme - which is supposed to mean a
-    /// web-side slip and nothing else. Before the document exists there is nothing to push to
-    /// anyway: the URL carries the scheme, and the document-start user script re-applies it.
-    ///
-    /// Internal for the same reason as `eventRouter` and `scriptEvaluator`: the iOS test run has
-    /// no app host, so no WebView there ever loads a page, and a test has to be able to put the
-    /// controller in the state a real checkout reaches.
-    var didLoadCheckoutDocument = false
-    private var checkoutStartedAt = Date()
-    /// How the controller runs colour-scheme JavaScript and reads the answer back. A separate
-    /// seam from ``scriptEvaluator`` because that one returns nothing, and because the iOS test
-    /// run has no app host, so a real WebView there never runs a script at all.
-    var colorSchemeEvaluator: @MainActor (WKWebView, String, @escaping (Bool) -> Void) -> Void = { webView, script, completion in
-        webView.evaluateJavaScript(script) { result, _ in
-            completion((result as? Bool) ?? (result as? NSNumber)?.boolValue ?? false)
-        }
-    }
+
+    /// The carousel URL the SDK loaded, kept so a page-finished can be matched to its origin.
+    private var carouselURL: URL?
     private var didStartCheckout = false
     private var openFunnel = CheckoutOpenFunnel()
     private var openStartedAt: Date?
@@ -155,9 +137,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     public override func viewDidLoad() {
         super.viewDidLoad()
         performanceSnapshotCollector = DevicePerformanceSnapshot.makeCollector()
-        checkoutStartedAt = Date()
         resolvedColorScheme = appColorScheme.resolve(hostIsDark: hostIsDark)
-        recordColorSchemeContext()
         registerForColorSchemeChanges()
         view.backgroundColor = .systemBackground
         eventRouter = GlomoPayEventRouter(
@@ -226,13 +206,6 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         ))
         userContentController.addUserScript(WKUserScript(
             source: GlomoPayInjectionScripts.main,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: false
-        ))
-        // At document start on every load, so a redirect or a return from a bank page does not
-        // leave the page on whatever scheme it opened with. The URL only covers the first load.
-        userContentController.addUserScript(WKUserScript(
-            source: GlomoPayInjectionScripts.colorScheme(resolvedColorScheme),
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
         ))
@@ -385,6 +358,10 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
 
     private func markBridgeReady() {
         advanceOpenStep(.bridgeReady)
+        // Again here, not only on didFinish: the page defines `glomoSetColorScheme` when its app
+        // mounts, which can be after the document finished loading. A scheme the host changed
+        // during that window would otherwise be lost with nothing retrying it.
+        if let webView { pushColorScheme(to: webView, loaded: webView.url, expected: currentURL) }
         if openFunnel.openedAfterTimeout {
             analytics.track(AnalyticsEventName.checkoutOpenedAfterTimeout, properties: [
                 "elapsed_ms": openStartedAt.map { Int(Date().timeIntervalSince($0) * 1_000) },
@@ -574,7 +551,6 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     @MainActor
     private func loadCheckout(url: URL, orderType: String) {
         currentURL = url
-        didLoadCheckoutDocument = true
         flowTypeState.resolve(orderType)
         analytics.updateFlowType(orderType)
         analytics.updateCheckoutURL(url)
@@ -625,7 +601,10 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
 
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         // No carousel fallback here: a page that never signals content stays hidden.
-        if webView === carouselWebView { return }
+        if webView === carouselWebView {
+            pushColorScheme(to: webView, loaded: webView.url, expected: carouselURL)
+            return
+        }
         if webView === flowWebView {
             flowLoadingView?.isHidden = true
             flowProgressView?.isHidden = true
@@ -638,6 +617,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         analytics.track(AnalyticsEventName.navigationFinished, properties: [
             "url": AnalyticsSanitizer.navigationURL(webView.url),
         ])
+        pushColorScheme(to: webView, loaded: webView.url, expected: currentURL)
         // Load-bearing: this starts the round-trip that ends in markBridgeReady(), the only thing
         // that hides the loading view. CheckoutControllerTests pins it.
         scriptEvaluator(webView, GlomoPayInjectionScripts.sendBridgeReadyAfterNativeLoad)
@@ -819,10 +799,9 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         flowConfiguration.userContentController = userContentController
 
         let flow = WKWebView(frame: .zero, configuration: flowConfiguration)
-        // The bank's page gets no scheme from us - it is not ours to theme - but it does get a
-        // pinned interface style, so the platform cannot report an appearance to it that
-        // disagrees with the checkout it was opened from.
-        applyInterfaceStyle(to: flow)
+        // Left exactly as it was before colour scheme shipped. Pinning it would let a merchant on
+        // `.dark` darken the bank's own 3DS page, which is neither ours to restyle nor gated on
+        // the merchant's dark-mode flag the way the checkout page is.
         flow.translatesAutoresizingMaskIntoConstraints = false
         flow.navigationDelegate = self
         flow.uiDelegate = self
@@ -932,14 +911,6 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         webView.overrideUserInterfaceStyle = resolvedColorScheme == .dark ? .dark : .light
     }
 
-    private func recordColorSchemeContext() {
-        analytics.updateColorScheme(
-            colorScheme: resolvedColorScheme.wireName,
-            appColorScheme: appColorScheme.rawValue,
-            deviceColorScheme: hostIsDark ? "dark" : "light"
-        )
-    }
-
     /// Watches the host's appearance for as long as the checkout is up.
     ///
     /// `registerForTraitChanges` where it exists; `traitCollectionDidChange` below it, which is
@@ -961,8 +932,8 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         syncColorScheme()
     }
 
-    /// The merchant changed the scheme through `GlomoPayCheckoutHandle.setColorScheme`.
-    func setColorScheme(_ scheme: GlomoColorScheme) {
+    /// The merchant changed the scheme through `GlomoPayCheckoutHandle.setAppColorScheme`.
+    func setAppColorScheme(_ scheme: GlomoColorScheme) {
         appColorScheme = scheme
         syncColorScheme()
     }
@@ -983,64 +954,50 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         guard !didTerminate, resolved != resolvedColorScheme else { return }
         let previous = resolvedColorScheme
         resolvedColorScheme = resolved
-        recordColorSchemeContext()
-
-        for target in [webView, flowWebView, carouselWebView].compactMap({ $0 }) {
-            applyInterfaceStyle(to: target)
-        }
-
-        var targets: [(name: String, webView: WKWebView)] = []
-        if didLoadCheckoutDocument, let webView { targets.append(("main", webView)) }
-        if let carouselWebView { targets.append(("carousel", carouselWebView)) }
-        guard !targets.isEmpty else { return }
 
         let script = GlomoPayInjectionScripts.colorScheme(resolved)
-        let collector = ColorSchemeChangeCollector(targets: targets.map(\.name)) { [weak self] applied, unprobed in
-            guard let self else { return }
-            self.colorSchemeChange = nil
-            self.analytics.track(AnalyticsEventName.colorSchemeChanged, properties: [
-                "previous_color_scheme": previous.wireName,
-                "webviews": targets.map(\.name),
-                "applied": applied,
-                "unprobed": unprobed.isEmpty ? nil : unprobed,
-                "elapsed_ms": Int(Date().timeIntervalSince(self.checkoutStartedAt) * 1_000),
-            ])
+        for target in [webView, carouselWebView].compactMap({ $0 }) {
+            applyInterfaceStyle(to: target)
+            scriptEvaluator(target, script)
         }
-        colorSchemeChange = collector
 
-        for target in targets {
-            colorSchemeEvaluator(target.webView, script) { applied in
-                collector.record(target: target.name, applied: applied)
-            }
-        }
-        // A WebView that never answers must not hold the row forever. Whatever has not arrived by
-        // then is reported as unprobed, which is not the same as the page having refused.
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.colorSchemeReportWindow) { [weak self] in
-            guard let self, self.colorSchemeChange === collector else { return }
-            collector.timeOut()
-        }
+        analytics.track(AnalyticsEventName.colorSchemeChanged, properties: [
+            "color_scheme": resolved.wireName,
+            "previous_color_scheme": previous.wireName,
+            "app_color_scheme": appColorScheme.rawValue,
+        ])
     }
 
-    /// How long a colour-scheme change waits for the pages to answer before the row is sent
-    /// without them. Slack rather than a budget - `evaluateJavaScript` answers in a frame or two -
-    /// so a WebView torn down mid-change cannot strand the event.
-    private static let colorSchemeReportWindow: TimeInterval = 0.4
+    /// Re-sends the scheme to a page that has just loaded, on our own origins only.
+    ///
+    /// Compared against the URL the SDK asked for rather than a domain list, so a `server`
+    /// override still themes while a page reached by redirect off our origin never does. The
+    /// document-start path is deliberately not used: `glomoSetColorScheme` does not exist that
+    /// early, and a user script registered once would pin the scheme the checkout opened with.
+    private func pushColorScheme(to webView: WKWebView, loaded: URL?, expected: URL?) {
+        guard sameOrigin(loaded, expected) else { return }
+        scriptEvaluator(webView, GlomoPayInjectionScripts.colorScheme(resolvedColorScheme))
+    }
+
+    private func sameOrigin(_ lhs: URL?, _ rhs: URL?) -> Bool {
+        guard let lhs, let rhs,
+              let lhsScheme = lhs.scheme?.lowercased(), let rhsScheme = rhs.scheme?.lowercased(),
+              let lhsHost = lhs.host?.lowercased(), let rhsHost = rhs.host?.lowercased()
+        else { return false }
+        return lhsScheme == rhsScheme && lhsHost == rhsHost && lhs.port == rhs.port
+    }
 
     private func prepareCarouselIfNeeded(host: UIView) {
         guard isLRSCheckout,
               let url = ConfigManager.getCarouselURL(config, colorScheme: resolvedColorScheme)
         else { return }
+        carouselURL = url
 
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = checkoutDataStore
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(
             source: GlomoPayInjectionScripts.carousel(),
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: false
-        ))
-        controller.addUserScript(WKUserScript(
-            source: GlomoPayInjectionScripts.colorScheme(resolvedColorScheme),
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
         ))

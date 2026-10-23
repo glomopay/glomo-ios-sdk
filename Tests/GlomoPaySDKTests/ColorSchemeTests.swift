@@ -19,13 +19,10 @@ final class ColorSchemeResolutionTests: XCTestCase {
         XCTAssertEqual(GlomoColorScheme.auto.resolve(hostIsDark: false), .light)
     }
 
-    func testALightOnlyAppOnADarkDeviceGetsALightCheckout() {
-        // `hostIsDark` is read off the view controller's own trait collection, which carries the
-        // host's `overrideUserInterfaceStyle`. An app pinned light reports light here even on a
-        // device in dark mode, and that is what the checkout must follow.
-        XCTAssertEqual(GlomoColorScheme.auto.resolve(hostIsDark: false), .light)
-        XCTAssertEqual(GlomoColorScheme.light.resolve(hostIsDark: true), .light)
-    }
+    // The app-light / device-dark case is not testable here: `resolve` takes a Bool, so asserting
+    // it again would only restate testAutoFollowsTheHost. What has to be proved is that
+    // `hostIsDark` reads the host's overridden style rather than the device's, which needs a real
+    // trait collection - see ColorSchemeControllerTests.
 
     func testTheWireVocabularyIsExactlyLightAndDark() {
         XCTAssertEqual(ResolvedColorScheme.light.wireName, "light")
@@ -86,6 +83,75 @@ final class ColorSchemeURLTests: XCTestCase {
     }
 }
 
+final class ColorSchemeURLUpsertTests: XCTestCase {
+    private let base = URL(string: "https://checkout.glomopay.com/?orderId=order_1&publicKey=live_k")!
+
+    func testItAddsTheParamWhenThePageHasStrippedIt() {
+        // The page removes it with history.replaceState once it has read it, so on most reload
+        // paths there is nothing to replace and it has to be put back.
+        XCTAssertEqual(queryParameters(withColorScheme(base, .dark))["colorScheme"], "dark")
+    }
+
+    func testItReplacesAStaleValueRatherThanAppendingASecond() {
+        let stamped = withColorScheme(base, .light)
+        let restamped = withColorScheme(stamped, .dark)
+        let items = URLComponents(url: restamped, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(items.filter { $0.name == "colorScheme" }.count, 1)
+        XCTAssertEqual(queryParameters(restamped)["colorScheme"], "dark")
+    }
+
+    func testItKeepsEveryOtherParam() {
+        let params = queryParameters(withColorScheme(base, .dark))
+        XCTAssertEqual(params["orderId"], "order_1")
+        XCTAssertEqual(params["publicKey"], "live_k")
+    }
+
+    func testItLeavesANonHttpUrlAlone() {
+        // URLComponents will hang a query off a mailto: without complaint, and a parameter no
+        // page can read is worse than none.
+        let mailto = URL(string: "mailto:support@glomo.one")!
+        XCTAssertEqual(withColorScheme(mailto, .dark).absoluteString, mailto.absoluteString)
+    }
+}
+
+final class ColorSchemeOriginGateTests: XCTestCase {
+    private let checkout = URL(string: "https://checkout.glomopay.com/?orderId=order_1")!
+
+    func testAnOriginIsSchemeHostAndPort() {
+        XCTAssertTrue(sameColorSchemeOrigin(checkout, URL(string: "https://checkout.glomopay.com/other")))
+        XCTAssertFalse(sameColorSchemeOrigin(checkout, URL(string: "http://checkout.glomopay.com/")))
+        XCTAssertFalse(sameColorSchemeOrigin(checkout, URL(string: "https://checkout.glomopay.com:8443/")))
+    }
+
+    func testADifferentHostIsADifferentOrigin() {
+        XCTAssertFalse(sameColorSchemeOrigin(checkout, URL(string: "https://bank.example.com/3ds")))
+    }
+
+    func testNilOnEitherSideIsNotAMatch() {
+        XCTAssertFalse(sameColorSchemeOrigin(nil, checkout))
+        XCTAssertFalse(sameColorSchemeOrigin(checkout, nil))
+    }
+
+    func testALivePushSkipsASurfaceSittingOnABankPage() {
+        // The case the gate exists for: a host theme change mid-payment must not restyle the
+        // bank's own page.
+        XCTAssertFalse(mayPushColorScheme(
+            loaded: URL(string: "https://bank.example.com/3ds"), expected: checkout
+        ))
+    }
+
+    func testALivePushReachesASurfaceBackOnAGlomoPage() {
+        XCTAssertTrue(mayPushColorScheme(
+            loaded: URL(string: "https://checkout.glomopay.com/step2"), expected: checkout
+        ))
+    }
+
+    func testALivePushIsAllowedBeforeAnythingIsCommitted() {
+        // Nothing to mis-theme, and the document that does land carries the scheme on its URL.
+        XCTAssertTrue(mayPushColorScheme(loaded: nil, expected: checkout))
+    }
+}
+
 final class ColorSchemeInjectionTests: XCTestCase {
     func testItGuardsTheSetterNotWindow() {
         // `window` always exists in a WebView; the setter is what is absent during load or on an
@@ -95,14 +161,24 @@ final class ColorSchemeInjectionTests: XCTestCase {
         XCTAssertFalse(script.contains("window?."))
     }
 
-    func testItSendsNothingButTheSetterCall() {
-        // No parked global: no page reads one, so it would be a contract with no consumer. No
-        // read-back either - a flag that is true whenever the setter returned says nothing about
-        // whether the page changed, because the page weighs the request against the merchant's
-        // own dashboard settings.
+    func testItParksTheValueBeforeCallingTheSetter() {
+        // The page seeds from the global on mount, which is what keeps a scheme pushed before
+        // the setter existed from being lost. Before, not after: a setter already present runs
+        // synchronously and would read a global not yet written.
         let script = GlomoPayInjectionScripts.colorScheme(.dark)
-        XCTAssertFalse(script.contains("__glomoColorScheme"))
-        XCTAssertFalse(script.contains("return"))
+        let parked = script.range(of: "window.__glomoColorScheme__ = 'dark'")
+        let called = script.range(of: "glomoSetColorScheme('dark')")
+        XCTAssertNotNil(parked)
+        XCTAssertNotNil(called)
+        if let parked, let called {
+            XCTAssertLessThan(parked.lowerBound, called.lowerBound)
+        }
+    }
+
+    func testItReadsNothingBack() {
+        // A flag that is true whenever the setter returned says nothing about whether the page
+        // changed - the page weighs the request against the merchant's dashboard settings.
+        XCTAssertFalse(GlomoPayInjectionScripts.colorScheme(.dark).contains("return"))
     }
 
     func testItEmitsTheWireVocabulary() {

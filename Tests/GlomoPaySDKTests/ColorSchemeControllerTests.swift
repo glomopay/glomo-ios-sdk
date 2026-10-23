@@ -11,9 +11,21 @@ import XCTest
 /// are covered on macOS in `ColorSchemeTests`; this file covers what only the controller does.
 @MainActor
 final class ColorSchemeControllerTests: XCTestCase {
+    /// `UIViewController.parent` is weak, so a parent built inside a helper would be gone before
+    /// the assertion runs and the trait inheritance with it.
+    private var retainedParents: [UIViewController] = []
+
+    private func queryParameters(_ url: URL?) -> [String: String] {
+        guard let url, let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else {
+            return [:]
+        }
+        return items.reduce(into: [:]) { result, item in result[item.name] = item.value }
+    }
+
     private func makeController(
         appColorScheme: GlomoColorScheme = .auto,
-        hostStyle: UIUserInterfaceStyle = .light
+        hostStyle: UIUserInterfaceStyle = .light,
+        insideParentStyled parentStyle: UIUserInterfaceStyle? = nil
     ) -> GlomoPayCheckoutViewController {
         let config = GlomoPayConfig(
             publicKey: "test_public_key",
@@ -29,6 +41,17 @@ final class ColorSchemeControllerTests: XCTestCase {
         )
         // Pinned before the view loads, because the scheme is resolved in viewDidLoad.
         controller.overrideUserInterfaceStyle = hostStyle
+        // Parented before the view loads too, for the same reason: otherwise the trait
+        // collection viewDidLoad reads has no ancestor to inherit from and the test proves
+        // nothing about which of the two won.
+        if let parentStyle {
+            let parent = UIViewController()
+            parent.overrideUserInterfaceStyle = parentStyle
+            retainedParents.append(parent)
+            parent.addChild(controller)
+            parent.view.addSubview(controller.view)
+            controller.didMove(toParent: parent)
+        }
         controller.loadViewIfNeeded()
         return controller
     }
@@ -109,6 +132,39 @@ final class ColorSchemeControllerTests: XCTestCase {
         // darken the bank's own 3DS page, which is not gated on the merchant's dark-mode flag the
         // way the checkout page is.
         XCTAssertEqual(flow.overrideUserInterfaceStyle, flowStyleBefore)
+    }
+
+    func testALightOnlyAppOnADarkDeviceGetsALightCheckout() throws {
+        // The item-4 case, and the only place it can actually be proved: `hostIsDark` reads the
+        // controller's own trait collection, so what is under test is that an app pinning
+        // `.light` inside a dark ancestor is followed rather than the ambient dark being read.
+        // Asserting `resolve(hostIsDark:)` again would only restate testAutoFollowsTheHost.
+        let controller = makeController(
+            appColorScheme: .auto, hostStyle: .light, insideParentStyled: .dark
+        )
+
+        let main = try XCTUnwrap(webViews(in: controller.view).first)
+        XCTAssertEqual(main.overrideUserInterfaceStyle, .light)
+    }
+
+    func testARetryAfterAChangeCarriesTheNewScheme() throws {
+        let controller = makeController(appColorScheme: .light)
+        let opened = try XCTUnwrap(controller.mainDocumentRequest(
+            for: XCTUnwrap(URL(string: "https://checkout.glomopay.com/?orderId=order_1&colorScheme=light"))
+        ).url)
+        XCTAssertEqual(queryParameters(opened)["colorScheme"], "light")
+
+        controller.setAppColorScheme(.dark)
+
+        // Retry and the recovery reload both replay the URL built at open. Rebuilt through the
+        // same chokepoint, they carry the scheme current now - not the one the checkout opened
+        // with - and the parameter is replaced rather than duplicated.
+        let retried = try XCTUnwrap(controller.mainDocumentRequest(
+            for: XCTUnwrap(URL(string: "https://checkout.glomopay.com/?orderId=order_1&colorScheme=light"))
+        ).url)
+        XCTAssertEqual(queryParameters(retried)["colorScheme"], "dark")
+        let items = URLComponents(url: retried, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(items.filter { $0.name == "colorScheme" }.count, 1)
     }
 
     func testTheHandleForwardsToTheCheckout() throws {

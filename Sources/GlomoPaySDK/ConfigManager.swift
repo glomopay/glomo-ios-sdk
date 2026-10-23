@@ -39,7 +39,7 @@ public enum ConfigManager {
         // `colorScheme`, the page hook is `glomoSetColorScheme`. The README says so, so nobody
         // assumes the wire was renamed with the property.
         if let colorScheme {
-            items.append(URLQueryItem(name: "colorScheme", value: colorScheme.wireName))
+            items.append(URLQueryItem(name: glomoColorSchemeQueryItem, value: colorScheme.wireName))
         }
         components.queryItems = items
         return components.url
@@ -62,7 +62,7 @@ public enum ConfigManager {
             URLQueryItem(name: "surface", value: "ios"),
         ]
         if let colorScheme {
-            items.append(URLQueryItem(name: "colorScheme", value: colorScheme.wireName))
+            items.append(URLQueryItem(name: glomoColorSchemeQueryItem, value: colorScheme.wireName))
         }
         components?.queryItems = items
         return components?.url

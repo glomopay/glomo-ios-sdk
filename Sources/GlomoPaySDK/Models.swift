@@ -17,7 +17,7 @@ public struct GlomoPayConfig: Sendable, Equatable {
 
     /// The colour scheme to request from the checkout page. Defaults to ``GlomoColorScheme/auto``.
     ///
-    /// Changing it during a live checkout goes through `GlomoPayCheckoutHandle.setColorScheme`,
+    /// Changing it during a live checkout goes through `GlomoPayCheckoutHandle.setAppColorScheme`,
     /// not through a new config - rebuilding the URL would reload the page and lose the payment.
     public let appColorScheme: GlomoColorScheme
 

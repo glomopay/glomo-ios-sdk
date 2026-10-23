@@ -358,9 +358,10 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
 
     private func markBridgeReady() {
         advanceOpenStep(.bridgeReady)
-        // Again here, not only on didFinish: the page defines `glomoSetColorScheme` when its app
-        // mounts, which can be after the document finished loading. A scheme the host changed
-        // during that window would otherwise be lost with nothing retrying it.
+        // A second attempt, not a fix. Bridge-ready is injected at page load rather than after
+        // the page's app mounts, so it does not reliably land after `glomoSetColorScheme` is
+        // defined - it just catches the cases where it does. What actually closes that window is
+        // the page seeding from the parked `window.__glomoColorScheme__` on mount; see KAN-9555.
         if let webView { pushColorScheme(to: webView, loaded: webView.url, expected: currentURL) }
         if openFunnel.openedAfterTimeout {
             analytics.track(AnalyticsEventName.checkoutOpenedAfterTimeout, properties: [
@@ -562,8 +563,15 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         webView.load(mainDocumentRequest(for: url))
     }
 
-    private func mainDocumentRequest(for url: URL) -> URLRequest {
-        var request = URLRequest(url: url)
+    /// The chokepoint for every main-document load the SDK performs: the first one, the recovery
+    /// reload after a web-content process termination, and Retry. The colour scheme is stamped
+    /// here rather than at each call site so none of them can be the one that forgets, and
+    /// `currentURL` is deliberately left holding the unstamped URL so each load re-stamps from
+    /// the scheme current at that moment.
+    ///
+    /// Internal rather than private so the simulator leg can assert what a replayed load carries.
+    func mainDocumentRequest(for url: URL) -> URLRequest {
+        var request = URLRequest(url: withColorScheme(url, resolvedColorScheme))
         request.httpMethod = "GET"
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
@@ -727,7 +735,9 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
                 "url": AnalyticsSanitizer.navigationURL(retryURL),
                 "error_code": nsError.code,
             ])
-            var request = URLRequest(url: retryURL)
+            // Stamped like every other main-document load - this one builds its own request
+            // rather than going through mainDocumentRequest, so it has to do it itself.
+            var request = URLRequest(url: withColorScheme(retryURL, resolvedColorScheme))
             request.cachePolicy = .reloadIgnoringLocalCacheData
             request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
             request.setValue("en-IN,en;q=0.9", forHTTPHeaderField: "Accept-Language")
@@ -944,20 +954,27 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
 
     /// Hands `resolved` to the live pages, if it actually moved.
     ///
-    /// Never rebuilds the checkout URL: reloading mid-payment loses the payment. The injected
-    /// setter is the whole of the live path, and the scheme also rides a document-start user
-    /// script so the next load carries it too.
+    /// Never reloads to apply a scheme: that would lose a payment in flight. The injected setter
+    /// is the whole of the live path. Any *later* load the SDK performs carries the new scheme
+    /// because every one of them is stamped in `mainDocumentRequest(for:)`.
     ///
-    /// The flow WebView is excluded from the scheme on purpose - it holds the bank's page on the
-    /// bank's origin - but its interface style is re-pinned with the others.
+    /// The script is gated per surface on the page actually being ours, exactly as the
+    /// page-finished push is - a WebView that has navigated off our origin is not ours to
+    /// restyle. The interface style is pinned regardless: that is a property of the WebView
+    /// rather than of the page on it, and it has to be right for the Glomo page the surface
+    /// returns to.
+    ///
+    /// The flow WebView is excluded entirely - it holds the bank's page on the bank's origin.
     private func applyColorScheme(_ resolved: ResolvedColorScheme) {
         guard !didTerminate, resolved != resolvedColorScheme else { return }
         let previous = resolvedColorScheme
         resolvedColorScheme = resolved
 
         let script = GlomoPayInjectionScripts.colorScheme(resolved)
-        for target in [webView, carouselWebView].compactMap({ $0 }) {
+        for (target, expected) in [(webView, currentURL), (carouselWebView, carouselURL)] {
+            guard let target else { continue }
             applyInterfaceStyle(to: target)
+            guard mayPushColorScheme(loaded: target.url, expected: expected) else { continue }
             scriptEvaluator(target, script)
         }
 
@@ -971,20 +988,19 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     /// Re-sends the scheme to a page that has just loaded, on our own origins only.
     ///
     /// Compared against the URL the SDK asked for rather than a domain list, so a `server`
-    /// override still themes while a page reached by redirect off our origin never does. The
-    /// document-start path is deliberately not used: `glomoSetColorScheme` does not exist that
-    /// early, and a user script registered once would pin the scheme the checkout opened with.
+    /// override still themes while a page reached by redirect off our origin never does.
+    ///
+    /// There is deliberately no document-start user script for this. `glomoSetColorScheme` does
+    /// not exist that early, and a script registered once carries the string it was registered
+    /// with - so it would pin the scheme the checkout opened with and quietly undo every later
+    /// change. The URL parameter covers the boot case instead.
     private func pushColorScheme(to webView: WKWebView, loaded: URL?, expected: URL?) {
         guard sameOrigin(loaded, expected) else { return }
         scriptEvaluator(webView, GlomoPayInjectionScripts.colorScheme(resolvedColorScheme))
     }
 
     private func sameOrigin(_ lhs: URL?, _ rhs: URL?) -> Bool {
-        guard let lhs, let rhs,
-              let lhsScheme = lhs.scheme?.lowercased(), let rhsScheme = rhs.scheme?.lowercased(),
-              let lhsHost = lhs.host?.lowercased(), let rhsHost = rhs.host?.lowercased()
-        else { return false }
-        return lhsScheme == rhsScheme && lhsHost == rhsHost && lhs.port == rhs.port
+        sameColorSchemeOrigin(lhs, rhs)
     }
 
     private func prepareCarouselIfNeeded(host: UIView) {

@@ -90,5 +90,18 @@ public final class GlomoPayCheckoutHandle {
         closeRequested = true
         checkout?.closeCheckout()
     }
+
+    /// Changes the colour scheme of a checkout that is already open.
+    ///
+    /// The page is told through the bridge, not by reloading it, so a payment in flight survives
+    /// the change. Do not dismiss and re-present the checkout to change the scheme.
+    ///
+    /// A request, not a switch: the page decides, against the merchant's dashboard settings. A
+    /// call made before the checkout has been presented, or after it has finished, is dropped -
+    /// unlike ``close()``, which latches. The URL already carries what the config said, so the
+    /// only thing a latched value could do is fight it.
+    public func setAppColorScheme(_ scheme: GlomoColorScheme) {
+        checkout?.setAppColorScheme(scheme)
+    }
 }
 #endif

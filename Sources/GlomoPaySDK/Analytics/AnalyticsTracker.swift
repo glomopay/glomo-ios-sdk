@@ -73,6 +73,10 @@ enum AnalyticsEventName {
     static let iOSDocumentRetry = "iOS Document Retry"
     static let consoleLogCaptured = "Console Log Captured"
     static let unsupportedFunctionalityUsed = "Unsupported Functionality Used"
+
+    /// The colour scheme changed during a live checkout and was pushed to the pages. Not emitted
+    /// for the scheme the checkout opened with.
+    static let colorSchemeChanged = "Checkout Color Scheme Changed"
 }
 
 enum GlomoPaySDKBuild {

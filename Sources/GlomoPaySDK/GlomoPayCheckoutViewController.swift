@@ -16,7 +16,6 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private var webView: WKWebView!
     private var flowWebView: WKWebView?
     private var flowOverlay: UIView?
-    private var flowToolbar: UIView?
     private var flowLoadingView: UIView?
     private var flowProgressView: UIProgressView?
     private var flowErrorView: UIView?
@@ -140,7 +139,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         performanceSnapshotCollector = DevicePerformanceSnapshot.makeCollector()
         resolvedColorScheme = appColorScheme.resolve(hostIsDark: hostIsDark)
         registerForColorSchemeChanges()
-        view.backgroundColor = GlomoPayChrome.resolvedSurface(for: appColorScheme)
+        view.backgroundColor = .systemBackground
         eventRouter = GlomoPayEventRouter(
             listener: listener,
             devMode: SDKBuildFlags.internalBuild,
@@ -246,8 +245,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private func configureLoadingView() {
         loadingView = UIView()
         loadingView.translatesAutoresizingMaskIntoConstraints = false
-        loadingView.backgroundColor = GlomoPayChrome.surface
-        loadingView.overrideUserInterfaceStyle = chromeStyle
+        loadingView.backgroundColor = .systemBackground
 
         let indicator = UIActivityIndicatorView(style: .large)
         indicator.translatesAutoresizingMaskIntoConstraints = false
@@ -257,7 +255,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         loadingLabel = UILabel()
         loadingLabel.translatesAutoresizingMaskIntoConstraints = false
         loadingLabel.text = GlomoPayStrings.loadingCheckout
-        loadingLabel.textColor = GlomoPayChrome.secondaryText
+        loadingLabel.textColor = .secondaryLabel
         loadingLabel.textAlignment = .center
         loadingView.addSubview(loadingLabel)
 
@@ -286,10 +284,6 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     }
 
     private func configureNavigationBar() {
-        // The bar is the SDK's own chrome, so it follows the scheme rather than the device. It
-        // belongs to the navigation controller rather than to this one, which is why it is not
-        // covered by any of the container overrides.
-        navigationController?.navigationBar.overrideUserInterfaceStyle = chromeStyle
         navigationItem.title = GlomoPayStrings.checkoutTitle
         navigationItem.leftBarButtonItem = UIBarButtonItem(
             barButtonSystemItem: .close,
@@ -766,15 +760,12 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
 
         let overlay = UIView()
         overlay.translatesAutoresizingMaskIntoConstraints = false
-        overlay.backgroundColor = GlomoPayChrome.resolvedSurface(for: appColorScheme)
+        overlay.backgroundColor = .systemBackground
         overlay.layer.zPosition = 100
 
-        // The bar and its Back are the only way off a bank page, so they are the surface this
-        // most has to get right. The override carries the button's tint with it.
         let toolbar = UIView()
         toolbar.translatesAutoresizingMaskIntoConstraints = false
-        toolbar.backgroundColor = GlomoPayChrome.surface
-        toolbar.overrideUserInterfaceStyle = chromeStyle
+        toolbar.backgroundColor = .systemBackground
 
         let back = UIButton(type: .system)
         back.translatesAutoresizingMaskIntoConstraints = false
@@ -833,11 +824,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
 
         let carouselHost = UIView()
         carouselHost.translatesAutoresizingMaskIntoConstraints = false
-        carouselHost.backgroundColor = GlomoPayChrome.surface
-        // Safe to override even though a WebView sits inside: the carousel is a Glomo page and
-        // its own style is pinned to the resolved scheme by `applyInterfaceStyle(to:)`, which
-        // wins over anything inherited.
-        carouselHost.overrideUserInterfaceStyle = chromeStyle
+        carouselHost.backgroundColor = .systemBackground
         carouselHost.clipsToBounds = true
         carouselHost.isHidden = true
         carouselContainer = carouselHost
@@ -888,7 +875,6 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
 
         flowWebView = flow
         flowOverlay = overlay
-        flowToolbar = toolbar
         flowLoadingView = loading
         flowProgressView = progress
         view.addSubview(overlay)
@@ -921,38 +907,6 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     /// them would return our own answer back.
     private var hostIsDark: Bool {
         traitCollection.userInterfaceStyle == .dark
-    }
-
-    /// The interface style the SDK's own chrome resolves against.
-    ///
-    /// From ``appColorScheme`` rather than from ``resolvedColorScheme`` - see
-    /// ``GlomoPayChrome/style(for:)`` for why `auto` must not darken the frame. Deliberately
-    /// never applied to this controller or to its root view: ``hostIsDark`` reads the
-    /// controller's own trait collection, and an override there would hand `auto` our answer
-    /// back instead of the host's, and would stop the trait observer firing at all.
-    private var chromeStyle: UIUserInterfaceStyle {
-        GlomoPayChrome.style(for: appColorScheme)
-    }
-
-    /// Repaints the chrome after the merchant moved ``appColorScheme``.
-    ///
-    /// Separate from ``applyColorScheme(_:)``, which is about the page. Two differences, both
-    /// load-bearing: this is keyed off the merchant's setting rather than the resolved scheme,
-    /// so `auto` -> `dark` on an already-dark host still moves the frame even though the page
-    /// sees no change; and it reaches the flow overlay, which the page path never touches.
-    ///
-    /// Only what exists is repainted. Anything built later reads ``chromeStyle`` as it is built.
-    private func applyChromeStyle() {
-        let style = chromeStyle
-        view.backgroundColor = GlomoPayChrome.resolvedSurface(for: appColorScheme)
-        loadingView?.overrideUserInterfaceStyle = style
-        errorView?.overrideUserInterfaceStyle = style
-        flowOverlay?.backgroundColor = GlomoPayChrome.resolvedSurface(for: appColorScheme)
-        flowToolbar?.overrideUserInterfaceStyle = style
-        flowLoadingView?.overrideUserInterfaceStyle = style
-        flowErrorView?.overrideUserInterfaceStyle = style
-        carouselContainer?.overrideUserInterfaceStyle = style
-        navigationController?.navigationBar.overrideUserInterfaceStyle = style
     }
 
     /// Pins a WebView's reported appearance to the scheme we sent the page.
@@ -991,7 +945,6 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     /// The merchant changed the scheme through `GlomoPayCheckoutHandle.setAppColorScheme`.
     func setAppColorScheme(_ scheme: GlomoColorScheme) {
         appColorScheme = scheme
-        applyChromeStyle()
         syncColorScheme()
     }
 
@@ -1257,15 +1210,14 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private func makeFlowLoadingView() -> UIView {
         let loading = UIView()
         loading.translatesAutoresizingMaskIntoConstraints = false
-        loading.backgroundColor = GlomoPayChrome.surface
-        loading.overrideUserInterfaceStyle = chromeStyle
+        loading.backgroundColor = .systemBackground
         let indicator = UIActivityIndicatorView(style: .large)
         indicator.translatesAutoresizingMaskIntoConstraints = false
         indicator.startAnimating()
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
         label.text = GlomoPayStrings.openingSecurePage
-        label.textColor = GlomoPayChrome.secondaryText
+        label.textColor = .secondaryLabel
         label.textAlignment = .center
         loading.addSubview(indicator)
         loading.addSubview(label)
@@ -1349,8 +1301,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private func makeErrorPanel(message: String, retry: Selector, cancel: Selector) -> UIView {
         let panel = UIView()
         panel.translatesAutoresizingMaskIntoConstraints = false
-        panel.backgroundColor = GlomoPayChrome.surface
-        panel.overrideUserInterfaceStyle = chromeStyle
+        panel.backgroundColor = .systemBackground
 
         let title = UILabel()
         title.text = GlomoPayStrings.connectionErrorTitle
@@ -1365,7 +1316,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         body.text = message
         body.numberOfLines = 0
         body.textAlignment = .center
-        body.textColor = GlomoPayChrome.secondaryText
+        body.textColor = .secondaryLabel
         body.translatesAutoresizingMaskIntoConstraints = false
         panel.addSubview(body)
 

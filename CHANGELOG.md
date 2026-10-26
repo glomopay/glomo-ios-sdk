@@ -23,6 +23,17 @@ public API changes require a new major release.
 
 ### Changed
 
+- Setting `appColorScheme` to `.dark` now also darkens the screens the SDK draws itself - the bar
+  and Back over a bank page, the navigation bar, the loading screens and the error panels - so the
+  frame matches the checkout inside it. `.light` keeps them light, and so does `.auto`: the page
+  may still answer light against your dashboard settings, and a dark frame around a light checkout
+  reads as a defect. There is no separate setting, so the frame and the page cannot be configured
+  into disagreeing. These screens keep UIKit's semantic colours rather than taking the checkout
+  page's own palette, so Increase Contrast and Smart Invert still reach them.
+- **`.auto` no longer leaves those screens following the device.** They did, for free, through
+  semantic colours - which meant a dark phone put a dark frame around a checkout that may well
+  have come back light. They now stay light under `.auto`, matching the other Glomo SDKs. If you
+  want a dark frame, ask for one with `.dark`.
 - The checkout and carousel WebViews now have their `overrideUserInterfaceStyle` pinned to the
   scheme the checkout resolved. `WKWebView` reports `prefers-color-scheme` from its trait
   collection, which inherits the host app, so without this a page told `dark` would still match

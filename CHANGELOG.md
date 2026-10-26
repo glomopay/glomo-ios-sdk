@@ -29,7 +29,6 @@ public API changes require a new major release.
   `prefers-color-scheme: light` in its own CSS whenever the host app was light. The bank and 3DS
   WebView is unchanged: it is sent no scheme and its appearance is not pinned. Nothing to
   configure.
-- Improved SDK diagnostics around checkout appearance.
 
 ## [1.0.0] - 2026-10-01
 

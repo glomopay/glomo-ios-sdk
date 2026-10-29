@@ -6,31 +6,18 @@ This project follows [Semantic Versioning](https://semver.org/).
 Starting with 1.0.0, the public API follows Semantic Versioning. Breaking
 public API changes require a new major release.
 
-## [Unreleased]
+## [1.1.0] - 2026-10-29
 
 ### Added
 
-- `GlomoPayConfig.appColorScheme` (`.auto` | `.light` | `.dark`, default `.auto`) asks the Glomo
-  checkout page for a colour scheme. It requests rather than forces: the page decides, against
-  your merchant dashboard settings. `.auto` follows the checkout's own trait collection, so an app
-  that sets `overrideUserInterfaceStyle` gets what it set. The parameter is defaulted and goes
-  last, so existing `GlomoPayConfig` call sites compile unchanged.
-- `GlomoPayCheckoutHandle.setAppColorScheme(_:)` changes the scheme of a checkout that is already
-  presented. The page is told through the bridge rather than reloaded, so a payment in flight
-  survives the change. A host appearance change reaches an open checkout on its own while the
-  scheme is `.auto`.
+- `GlomoPayConfig.appColorScheme` (`.auto` | `.light` | `.dark`, default `.auto`) provides the Glomo checkout page the preferred colour scheme. It requests rather than forces: the page decides (based on backend configuration), against your merchant dashboard settings.
+  - `.auto` follows the checkout's own trait collection, so an app that sets `overrideUserInterfaceStyle` gets what it set. The parameter is defaulted and goes last, so existing `GlomoPayConfig` call sites compile unchanged.
+- `GlomoPayCheckoutHandle.setAppColorScheme(_:)` changes the scheme of a checkout that is already presented. The page is told through the bridge rather than reloaded, so a payment in flight survives the change. A host appearance change reaches an open checkout on its own while the scheme is `.auto`.
 - `GlomoColorScheme` enum.
 
 ### Changed
 
-- Analytics events now follow Glomo's unified naming; no API, callback or configuration change.
-- The privacy manifest no longer declares performance data: the SDK stopped sending the device
-  performance snapshot to analytics, and the Sentry client never collected it. Nothing to
-  configure.
-- Analytics events now carry `journey_id`, and the anonymous Mixpanel identity is now the per-open
-  journey id (`$device:<journey_id>`) instead of `order_id`. A new `sdk_loaded` event marks each
-  checkout invocation, before validation and device checks; refused opens are reported by
-  `sdk_checkout_failed`.
+- Improved SDK diagnostics and observability revamp to better assist merchants.
 - The checkout and carousel WebViews now have their `overrideUserInterfaceStyle` pinned to the
   scheme the checkout resolved. `WKWebView` reports `prefers-color-scheme` from its trait
   collection, which inherits the host app, so without this a page told `dark` would still match

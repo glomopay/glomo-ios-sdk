@@ -2,11 +2,11 @@
 
 Native Swift implementation of the GlomoPay checkout SDK. The public contract is intentionally aligned with the Flutter and Kotlin SDKs.
 
-Current release: `1.0.0`
+Current release: `1.1.0`
 
 ## Installation with Swift Package Manager
 
-Add the Git repository URL in Xcode and select the `v1.0.0` release tag:
+Add the Git repository URL in Xcode and select the `v1.1.0` release tag:
 
 ```text
 https://github.com/glomopay/glomo-ios-sdk.git
@@ -258,7 +258,7 @@ field in `Package.swift`. The SDK's own version string lives in `GlomoPaySDKBuil
 (`Sources/GlomoPaySDK/Analytics/AnalyticsTracker.swift`) and is what Mixpanel and Sentry
 report; it is not derived from the tag, so it must be updated by hand in the same commit.
 Keep `GlomoPaySDKBuild.version`, `CHANGELOG.md`, and the Git release tag in step. For
-version `1.0.0`:
+version `1.1.0`:
 
 There is no separate publish step. Swift Package Manager resolves the package directly from
 this repository, so the tag on `main` is the release. Everything a merchant compiles must
@@ -285,8 +285,8 @@ token or symbol-upload credential in this file.
 After the release pull request is merged, tag the merge commit on `main`:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 Tags are only ever created on `main`, never on a release branch.

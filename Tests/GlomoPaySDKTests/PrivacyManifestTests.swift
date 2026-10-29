@@ -23,10 +23,10 @@ final class PrivacyManifestTests: XCTestCase {
         for type in [
             "NSPrivacyCollectedDataTypeProductInteraction",
             "NSPrivacyCollectedDataTypeOtherDiagnosticData",
-            "NSPrivacyCollectedDataTypePerformanceData",
         ] {
             XCTAssertEqual(byType[type]?["NSPrivacyCollectedDataTypeLinked"] as? Bool, true)
         }
+        XCTAssertNil(byType["NSPrivacyCollectedDataTypePerformanceData"])
     }
 
     func testManifestDoesNotMisclassifyAnalyticsAsATTTracking() throws {

@@ -2,58 +2,140 @@ import XCTest
 @testable import GlomoPaySDK
 
 final class MixpanelAnalyticsTrackerTests: XCTestCase {
-    func testTrackerAddsApprovedCommonProperties() async throws {
+    func testStandardProperties() async throws {
         let transport = RecordingAnalyticsTransport()
-        let tracker = MixpanelAnalyticsTracker(
+        let tracker = makeTracker(
             config: GlomoPayConfig(publicKey: "test_public_key", orderId: "order_123"),
-            sessionID: "session-uuid",
-            sdkVersion: "1.0.0",
             initialFlowType: "auto",
             transport: transport,
-            errorReporter: NoOpSDKErrorReporter(),
             deviceProperties: {
-                ["$model": "iPhone18,3", "$app_namespace": "com.example.merchant"]
-            },
-            now: { Date(timeIntervalSince1970: 1_723_620_000) }
+                [
+                    "$model": "iPhone18,3",
+                    "$os": "iOS",
+                    "$os_version": "18.5",
+                    "$app_namespace": "com.example.merchant",
+                    "mp_lib": "glomo-ios-sdk",
+                ]
+            }
         )
 
+        tracker.trackPageViewed(.loading)
         tracker.updateFlowType("lrs")
-        tracker.updateCheckoutURL(URL(string: "https://checkout.glomopay.com/?orderId=order_123")!)
-        tracker.track(AnalyticsEventName.checkoutStarted)
+        tracker.trackPageViewed(.checkout)
 
-        let event = try await transport.nextEvent()
-        let properties = event.jsonProperties
-        XCTAssertEqual(properties["distinct_id"] as? String, "$device:session-uuid")
-        XCTAssertEqual(properties["$device_id"] as? String, "session-uuid")
-        XCTAssertEqual(properties["journey_id"] as? String, "session-uuid")
-        XCTAssertEqual(properties["session_id"] as? String, "session-uuid")
-        XCTAssertEqual(properties["order_id"] as? String, "order_123")
-        XCTAssertEqual(properties["flow_type"] as? String, "lrs")
-        XCTAssertEqual(properties["surface"] as? String, "ios-sdk")
+        let first = try await transport.nextEvent().jsonProperties
+        let second = try await transport.nextEvent().jsonProperties
+        let events = [first, second]
+        let beforeResolve = try XCTUnwrap(events.first { $0["page_name"] as? String == "loading" })
+        let properties = try XCTUnwrap(events.first { $0["page_name"] as? String == "checkout" })
+        XCTAssertNil(beforeResolve["journey"])
+        XCTAssertEqual(properties["journey"] as? String, "lrs")
+        XCTAssertEqual(properties["integration"] as? String, "ios_sdk")
         XCTAssertEqual(properties["platform"] as? String, "ios")
-        XCTAssertEqual(properties["mock_mode"] as? Bool, true)
+        XCTAssertEqual(properties["sdk_version"] as? String, "1.0.0")
+        XCTAssertEqual(properties["public_key"] as? String, "test_public_key")
+        XCTAssertEqual(properties["dev_mode"] as? Bool, false)
+        XCTAssertEqual(properties["key_mode"] as? String, "test")
+        XCTAssertEqual(properties["resource_id"] as? String, "order_123")
+        XCTAssertEqual(properties["journey_id"] as? String, "session-uuid")
+        XCTAssertEqual(properties["$device_id"] as? String, "session-uuid")
+        XCTAssertEqual(properties["distinct_id"] as? String, "$device:session-uuid")
+        XCTAssertNotNil(properties["$insert_id"] as? String)
         XCTAssertEqual(properties["time"] as? Int64, 1_723_620_000_000)
-        XCTAssertFalse((properties["timestamp"] as? String ?? "").contains("REDACTED"))
+        XCTAssertEqual(properties["$model"] as? String, "iPhone18,3")
+        XCTAssertEqual(properties["$os"] as? String, "iOS")
+        for dropped in Self.droppedStandardKeys {
+            XCTAssertNil(properties[dropped], dropped)
+        }
+        let keyPattern = try NSRegularExpression(pattern: #"^\$?[a-z0-9_]+$"#)
+        for key in properties.keys {
+            XCTAssertNotNil(
+                keyPattern.firstMatch(in: key, range: NSRange(key.startIndex..., in: key)),
+                "\(key) is not snake_case"
+            )
+        }
     }
 
-    func testSubscriptionIDStaysAPropertyAndIsNotTheMixpanelIdentity() async throws {
+    func testStandardPropertiesWinOverCallSiteKeys() async throws {
         let transport = RecordingAnalyticsTransport()
-        let tracker = MixpanelAnalyticsTracker(
-            config: GlomoPayConfig(publicKey: "test_public_key", subscriptionId: "sub_123"),
-            sessionID: "session-uuid",
-            sdkVersion: "1.0.0",
-            initialFlowType: "standard",
+        let tracker = makeTracker(
             transport: transport,
-            errorReporter: NoOpSDKErrorReporter(),
-            deviceProperties: { [:] }
+            deviceProperties: { ["$os": "iOS", "$model": "iPhone18,3"] }
         )
 
-        tracker.track(AnalyticsEventName.sdkInitialized)
+        tracker.track(AnalyticsEventName.sdkActionSubmitted, properties: [
+            "action_name": "bank_redirect",
+            "integration": "web",
+            "platform": "web",
+            "sdk_version": "9.9.9",
+            "public_key": "live_other",
+            "dev_mode": true,
+            "key_mode": "live",
+            "resource_id": "order_other",
+            "journey": "lrs",
+            "journey_id": "other-journey",
+            "distinct_id": "other-user",
+            "$os": "Android",
+            "$model": "Pixel 8",
+        ])
 
         let properties = try await transport.nextEvent().jsonProperties
-        XCTAssertEqual(properties["order_id"] as? String, "sub_123")
+        XCTAssertEqual(properties["action_name"] as? String, "bank_redirect")
+        XCTAssertEqual(properties["integration"] as? String, "ios_sdk")
+        XCTAssertEqual(properties["platform"] as? String, "ios")
+        XCTAssertEqual(properties["sdk_version"] as? String, "1.0.0")
+        XCTAssertEqual(properties["public_key"] as? String, "test_public_key")
+        XCTAssertEqual(properties["dev_mode"] as? Bool, false)
+        XCTAssertEqual(properties["key_mode"] as? String, "test")
+        XCTAssertEqual(properties["resource_id"] as? String, "order_123")
+        XCTAssertEqual(properties["journey"] as? String, "standard")
+        XCTAssertEqual(properties["journey_id"] as? String, "session-uuid")
         XCTAssertEqual(properties["distinct_id"] as? String, "$device:session-uuid")
-        XCTAssertEqual(properties["subscription_id"] as? String, "sub_123")
+        XCTAssertEqual(properties["$os"] as? String, "iOS")
+        XCTAssertEqual(properties["$model"] as? String, "iPhone18,3")
+    }
+
+    func testLiveKeysReportLiveKeyMode() async throws {
+        let transport = RecordingAnalyticsTransport()
+        let tracker = makeTracker(
+            config: GlomoPayConfig(publicKey: "live_public_key", orderId: "order_123"),
+            transport: transport
+        )
+
+        tracker.trackPageViewed(.checkout)
+
+        let properties = try await transport.nextEvent().jsonProperties
+        XCTAssertEqual(properties["key_mode"] as? String, "live")
+    }
+
+    func testUnknownKeyPrefixLeavesKeyModeUnset() async throws {
+        let transport = RecordingAnalyticsTransport()
+        let tracker = makeTracker(
+            config: GlomoPayConfig(publicKey: "pk_without_prefix", orderId: "order_123"),
+            transport: transport
+        )
+
+        tracker.trackPageViewed(.checkout)
+
+        let properties = try await transport.nextEvent().jsonProperties
+        XCTAssertNil(properties["key_mode"])
+    }
+
+    func testSubscriptionIsTheResourceAndTheJourneyButNotTheMixpanelIdentity() async throws {
+        let transport = RecordingAnalyticsTransport()
+        let tracker = makeTracker(
+            config: GlomoPayConfig(publicKey: "test_public_key", subscriptionId: "sub_123"),
+            initialFlowType: "auto",
+            transport: transport
+        )
+
+        tracker.trackPageViewed(.checkout)
+
+        let properties = try await transport.nextEvent().jsonProperties
+        XCTAssertEqual(properties["resource_id"] as? String, "sub_123")
+        XCTAssertEqual(properties["journey"] as? String, "subscription")
+        XCTAssertEqual(properties["distinct_id"] as? String, "$device:session-uuid")
+        XCTAssertNil(properties["subscription_id"])
     }
 
     func testCheckoutURLJourneyIDMatchesTheJourneyIDOnEveryEvent() async throws {
@@ -63,42 +145,26 @@ final class MixpanelAnalyticsTrackerTests: XCTestCase {
         let urlJourneyID = URLComponents(url: url, resolvingAgainstBaseURL: false)?
             .queryItems?.first { $0.name == "journeyId" }?.value
         let transport = RecordingAnalyticsTransport()
-        let tracker = MixpanelAnalyticsTracker(
-            config: config,
-            sessionID: journeyID,
-            sdkVersion: "1.0.0",
-            initialFlowType: "standard",
-            transport: transport,
-            errorReporter: NoOpSDKErrorReporter(),
-            deviceProperties: { [:] }
-        )
+        let tracker = makeTracker(config: config, sessionID: journeyID, transport: transport)
 
-        tracker.track(AnalyticsEventName.checkoutStarted)
-        tracker.track(AnalyticsEventName.paymentSuccess, properties: ["payment_id": "pay_123"])
+        tracker.trackPageViewed(.checkout)
+        tracker.trackCheckoutClosed(.sdk, page: .checkout, paymentEvent: .paymentSuccess, hadListener: true)
 
         for _ in 0..<2 {
             let properties = try await transport.nextEvent().jsonProperties
             XCTAssertEqual(properties["journey_id"] as? String, urlJourneyID)
             XCTAssertEqual(properties["$device_id"] as? String, urlJourneyID)
             XCTAssertEqual(properties["distinct_id"] as? String, "$device:\(journeyID)")
-            XCTAssertNotEqual(properties["distinct_id"] as? String, properties["order_id"] as? String)
+            XCTAssertNotEqual(properties["distinct_id"] as? String, properties["resource_id"] as? String)
         }
     }
 
     func testEveryEventGetsItsOwnLowercaseInsertID() async throws {
         let transport = RecordingAnalyticsTransport()
-        let tracker = MixpanelAnalyticsTracker(
-            config: GlomoPayConfig(publicKey: "test_public_key", orderId: "order_123"),
-            sessionID: "session-uuid",
-            sdkVersion: "1.0.0",
-            initialFlowType: "standard",
-            transport: transport,
-            errorReporter: NoOpSDKErrorReporter(),
-            deviceProperties: { [:] }
-        )
+        let tracker = makeTracker(transport: transport)
 
-        tracker.track(AnalyticsEventName.checkoutStarted)
-        tracker.track(AnalyticsEventName.checkoutStarted)
+        tracker.trackPageViewed(.bankRedirect)
+        tracker.trackPageViewed(.bankRedirect)
 
         let first = try await transport.nextEvent().jsonProperties["$insert_id"] as? String
         let second = try await transport.nextEvent().jsonProperties["$insert_id"] as? String
@@ -110,47 +176,52 @@ final class MixpanelAnalyticsTrackerTests: XCTestCase {
         }
     }
 
-    func testCheckoutURLIsSentWithoutItsQueryString() async throws {
-        let config = GlomoPayConfig(publicKey: "test_public_key", orderId: "order_123")
-        let url = try XCTUnwrap(
-            ConfigManager.getCheckoutURL(config, journeyID: "01d245ac-f936-4545-9013-7114243e312f")
-        )
+    func testOnceEventsAreSentOncePerJourneyAndFailuresOncePerCode() async throws {
         let transport = RecordingAnalyticsTransport()
-        let tracker = MixpanelAnalyticsTracker(
-            config: config,
-            sessionID: "01d245ac-f936-4545-9013-7114243e312f",
-            sdkVersion: "1.0.0",
-            initialFlowType: "standard",
-            transport: transport,
-            errorReporter: NoOpSDKErrorReporter(),
-            deviceProperties: { [:] }
+        let tracker = makeTracker(transport: transport)
+
+        for _ in 0..<2 {
+            tracker.trackSDKLoaded()
+            tracker.trackCheckoutFailed(.openTimeout(lastStep: "navigation_finished"))
+            tracker.trackPageViewed(.educationCarousel)
+            tracker.trackCheckoutClosed(.userDismiss, page: .checkout)
+        }
+        tracker.trackCheckoutFailed(.dependenciesFailedToLoad)
+        tracker.trackPageViewed(.checkout)
+        tracker.trackPageViewed(.checkout)
+        tracker.trackPageViewed(.bankRedirect)
+        tracker.trackPageViewed(.bankRedirect)
+
+        _ = try await transport.waitForEvents(named: AnalyticsEventName.sdkPageViewed, count: 4)
+        _ = try await transport.waitForEvents(named: AnalyticsEventName.sdkCheckoutFailed, count: 2)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let loaded = await transport.allEvents(named: AnalyticsEventName.sdkLoaded)
+        let failed = await transport.allEvents(named: AnalyticsEventName.sdkCheckoutFailed)
+        let viewed = await transport.allEvents(named: AnalyticsEventName.sdkPageViewed)
+        let closed = await transport.allEvents(named: AnalyticsEventName.sdkCheckoutClosed)
+        XCTAssertEqual(loaded.count, 1)
+        XCTAssertEqual(
+            Set(failed.map { $0.jsonProperties["error_code"] as? String }),
+            ["open_timeout", "dependencies_failed_to_load"]
         )
-
-        tracker.updateCheckoutURL(url)
-        tracker.track(AnalyticsEventName.checkoutStarted)
-
-        let properties = try await transport.nextEvent().jsonProperties
-        let checkoutURL = try XCTUnwrap(properties["checkout_url"] as? String)
-        XCTAssertEqual(checkoutURL, "https://checkout.glomopay.com/")
-        XCTAssertFalse(checkoutURL.contains("?"))
-        XCTAssertFalse(checkoutURL.contains("journeyId"))
+        XCTAssertEqual(failed.count, 2)
+        let pages = viewed.map { $0.jsonProperties["page_name"] as? String ?? "" }
+        XCTAssertEqual(pages.sorted(), ["bank_redirect", "bank_redirect", "checkout", "education_carousel"])
+        XCTAssertEqual(closed.count, 1)
     }
 
     func testSDKLoadedCarriesTheBorrowedPropertySourceFields() async throws {
         let transport = RecordingAnalyticsTransport()
-        let tracker = MixpanelAnalyticsTracker(
-            config: GlomoPayConfig(publicKey: "test_public_key", orderId: "order_123"),
-            sessionID: "session-uuid",
+        let tracker = makeTracker(
             sdkVersion: "1.2.3",
             initialFlowType: "auto",
             transport: transport,
-            errorReporter: NoOpSDKErrorReporter(),
             deviceProperties: {
                 ["$os": "iOS", "$os_version": "18.5", "$model": "iPhone17,3"]
             }
         )
 
-        tracker.track(AnalyticsEventName.sdkLoaded, properties: ["integration": "ios_sdk"])
+        tracker.trackSDKLoaded()
 
         let event = try await transport.nextEvent()
         let properties = event.jsonProperties
@@ -164,55 +235,33 @@ final class MixpanelAnalyticsTrackerTests: XCTestCase {
         XCTAssertEqual(properties["journey_id"] as? String, "session-uuid")
     }
 
-    func testSDKInitializedIncludesPerformanceSnapshotProperties() async throws {
-        let transport = RecordingAnalyticsTransport()
-        let tracker = MixpanelAnalyticsTracker(
-            config: GlomoPayConfig(publicKey: "test_public_key", orderId: "order_123"),
-            sessionID: "session-uuid",
-            sdkVersion: "1.0.0",
-            initialFlowType: "auto",
-            transport: transport,
-            errorReporter: NoOpSDKErrorReporter(),
-            deviceProperties: { [:] }
-        )
-
-        tracker.track(AnalyticsEventName.sdkInitialized, properties: [
-            "perf_snapshot_at": "sdk_initialized",
-            "battery_level_percent": 42,
-            "thermal_state": "serious",
-            "ram_available_bytes": Int64(120_000_000),
-        ])
-
-        let properties = try await transport.nextEvent().jsonProperties
-        XCTAssertEqual(properties["perf_snapshot_at"] as? String, "sdk_initialized")
-        XCTAssertEqual(properties["battery_level_percent"] as? Int64, 42)
-        XCTAssertEqual(properties["thermal_state"] as? String, "serious")
-        XCTAssertEqual(properties["ram_available_bytes"] as? Int64, 120_000_000)
-    }
-
     func testResolvedNetworkSnapshotIsMergedIntoSubsequentEvents() async throws {
         let transport = RecordingAnalyticsTransport()
-        let tracker = MixpanelAnalyticsTracker(
-            config: GlomoPayConfig(publicKey: "test_public_key", orderId: "order_123"),
-            sessionID: "session-uuid",
-            sdkVersion: "1.0.0",
-            initialFlowType: "auto",
-            transport: transport,
-            errorReporter: NoOpSDKErrorReporter(),
-            deviceProperties: { [:] }
-        )
+        let tracker = makeTracker(transport: transport)
 
-        tracker.track(AnalyticsEventName.sdkInitialized, properties: [
+        tracker.updateNetworkSnapshotProperties([
             "$wifi_enabled": true,
             "$cellular_enabled": false,
         ])
-        _ = try await transport.nextEvent()
-
-        tracker.track(AnalyticsEventName.checkoutStarted)
+        tracker.trackPageViewed(.checkout)
         let properties = try await transport.nextEvent().jsonProperties
 
         XCTAssertEqual(properties["$wifi_enabled"] as? Bool, true)
         XCTAssertEqual(properties["$cellular_enabled"] as? Bool, false)
+    }
+
+    func testLongResourceIDIsCappedInsteadOfRejectingTheEvent() async throws {
+        let transport = RecordingAnalyticsTransport()
+        let orderID = "order_" + String(repeating: "a", count: 1_994)
+        let tracker = makeTracker(
+            config: GlomoPayConfig(publicKey: "test_public_key", orderId: orderID),
+            transport: transport
+        )
+
+        tracker.trackPageViewed(.checkout)
+
+        let properties = try await transport.nextEvent().jsonProperties
+        XCTAssertEqual(properties["resource_id"] as? String, String(orderID.prefix(1_000)))
     }
 
     func testRuntimeConfigurationTrimsValuesAndDisablesBlankConfiguration() {
@@ -285,6 +334,33 @@ final class MixpanelAnalyticsTrackerTests: XCTestCase {
 
 private func assertSendable<T: Sendable>(_: T.Type) {}
 
+private func makeTracker(
+    config: GlomoPayConfig = GlomoPayConfig(publicKey: "test_public_key", orderId: "order_123"),
+    sessionID: String = "session-uuid",
+    sdkVersion: String = "1.0.0",
+    initialFlowType: String = "standard",
+    transport: AnalyticsTransporting,
+    deviceProperties: @escaping () -> [String: Any?] = { [:] }
+) -> MixpanelAnalyticsTracker {
+    MixpanelAnalyticsTracker(
+        config: config,
+        sessionID: sessionID,
+        sdkVersion: sdkVersion,
+        initialFlowType: initialFlowType,
+        transport: transport,
+        errorReporter: NoOpSDKErrorReporter(),
+        deviceProperties: deviceProperties,
+        now: { Date(timeIntervalSince1970: 1_723_620_000) }
+    )
+}
+
+extension MixpanelAnalyticsTrackerTests {
+    static let droppedStandardKeys = [
+        "order_id", "subscription_id", "flow_type", "mock_mode", "session_id", "timestamp",
+        "checkout_url", "sdk_source", "surface", "device_os_version",
+    ]
+}
+
 actor RecordingAnalyticsTransport: AnalyticsTransporting {
     private var events: [AnalyticsEvent] = []
     private var history: [AnalyticsEvent] = []
@@ -311,6 +387,10 @@ actor RecordingAnalyticsTransport: AnalyticsTransporting {
 
     func allEvents(named name: String) -> [AnalyticsEvent] {
         history.filter { $0.name == name }
+    }
+
+    func recordedEvents() -> [AnalyticsEvent] {
+        history
     }
 
     func waitForEvents(named name: String, count: Int) async throws -> [AnalyticsEvent] {

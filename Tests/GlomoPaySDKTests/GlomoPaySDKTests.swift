@@ -100,7 +100,6 @@ final class GlomoPaySDKTests: XCTestCase {
         var results: [GlomoPayResult] = []
         let router = GlomoPayEventRouter(
             listener: listener,
-            devMode: false,
             onComplete: { results.append($0) },
             analytics: NoOpAnalyticsTracker(),
             errorReporter: NoOpSDKErrorReporter()
@@ -129,7 +128,6 @@ final class GlomoPaySDKTests: XCTestCase {
         var results: [GlomoPayResult] = []
         let router = GlomoPayEventRouter(
             listener: listener,
-            devMode: false,
             onComplete: { results.append($0) },
             analytics: NoOpAnalyticsTracker(),
             errorReporter: NoOpSDKErrorReporter()
@@ -153,7 +151,6 @@ final class GlomoPaySDKTests: XCTestCase {
         var cancellationResults: [GlomoPayResult] = []
         let cancellationRouter = GlomoPayEventRouter(
             listener: cancellationListener,
-            devMode: false,
             onComplete: { cancellationResults.append($0) },
             analytics: NoOpAnalyticsTracker(),
             errorReporter: NoOpSDKErrorReporter()
@@ -171,7 +168,6 @@ final class GlomoPaySDKTests: XCTestCase {
         var openedURLs: [URL] = []
         let router = GlomoPayEventRouter(
             listener: listener,
-            devMode: false,
             onComplete: { _ in },
             onWindowOpen: { openedURLs.append($0) },
             analytics: analytics,
@@ -183,9 +179,8 @@ final class GlomoPaySDKTests: XCTestCase {
 
         XCTAssertEqual(openedURLs.map(\.absoluteString), ["https://bank.example/3ds"])
         XCTAssertEqual(analytics.names, [
-            AnalyticsEventName.redirectOpened,
-            AnalyticsEventName.checkoutDependenciesFailed,
-            AnalyticsEventName.fileUploadRequested,
+            AnalyticsEventName.sdkPageViewed,
+            AnalyticsEventName.sdkCheckoutFailed,
         ])
     }
 
@@ -193,7 +188,6 @@ final class GlomoPaySDKTests: XCTestCase {
         var readyCount = 0
         let router = GlomoPayEventRouter(
             listener: nil,
-            devMode: false,
             onComplete: { _ in },
             onBridgeReady: { readyCount += 1 },
             analytics: NoOpAnalyticsTracker(),
@@ -206,15 +200,14 @@ final class GlomoPaySDKTests: XCTestCase {
     }
 
     func testTerminalResultWithNoListenerIsReportedNotDropped() {
-        let analytics = CapturingAnalyticsTracker()
+        let reporter = OperationCapturingReporter()
         var results: [GlomoPayResult] = []
         // No listener at all: the same situation as a host that let a weakly held one go.
         let router = GlomoPayEventRouter(
             listener: nil,
-            devMode: false,
             onComplete: { results.append($0) },
-            analytics: analytics,
-            errorReporter: NoOpSDKErrorReporter()
+            analytics: NoOpAnalyticsTracker(),
+            errorReporter: reporter
         )
 
         router.handle(envelope: [
@@ -230,14 +223,13 @@ final class GlomoPaySDKTests: XCTestCase {
         ])
 
         XCTAssertEqual(results.count, 1)
-        XCTAssertTrue(analytics.names.contains(AnalyticsEventName.listenerUnavailable))
+        XCTAssertEqual(reporter.operations, ["listener_unavailable"])
     }
 
     func testMalformedBridgeMessageBecomesSdkError() {
         let listener = MockListener()
         let router = GlomoPayEventRouter(
             listener: listener,
-            devMode: false,
             onComplete: { _ in },
             analytics: NoOpAnalyticsTracker(),
             errorReporter: NoOpSDKErrorReporter()
@@ -248,19 +240,17 @@ final class GlomoPaySDKTests: XCTestCase {
     }
 
     func testBridgeErrorWithNoListenerReportsUnavailable() {
-        let analytics = CapturingAnalyticsTracker()
+        let reporter = OperationCapturingReporter()
         let router = GlomoPayEventRouter(
             listener: nil,
-            devMode: false,
             onComplete: { _ in },
-            analytics: analytics,
-            errorReporter: NoOpSDKErrorReporter()
+            analytics: NoOpAnalyticsTracker(),
+            errorReporter: reporter
         )
 
         router.handle(envelope: [:])
 
-        XCTAssertTrue(analytics.names.contains(AnalyticsEventName.sdkError))
-        XCTAssertTrue(analytics.names.contains(AnalyticsEventName.listenerUnavailable))
+        XCTAssertEqual(reporter.operations, ["bridge_message", "listener_unavailable"])
     }
 }
 
@@ -298,5 +288,11 @@ private final class CapturingAnalyticsTracker: AnalyticsTracking {
     var names: [String] = []
     func track(_ event: String, properties: [String: Any?]) { names.append(event) }
     func updateFlowType(_ flowType: String) {}
-    func updateCheckoutURL(_ url: URL) {}
+}
+
+private final class OperationCapturingReporter: SDKErrorReporting, @unchecked Sendable {
+    var operations: [String] = []
+    func updateFlowType(_ flowType: String) {}
+    func addBreadcrumb(category: String, message: String, data: [String: Any?]) {}
+    func capture(operation: String, error: Error, context: [String: Any?]) { operations.append(operation) }
 }

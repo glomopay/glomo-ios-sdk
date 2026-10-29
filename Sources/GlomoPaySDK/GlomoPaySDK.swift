@@ -29,8 +29,8 @@ public final class GlomoPaySDK {
     /// The SDK holds `listener` weakly: it does not keep a merchant object alive. Retain the
     /// listener for at least as long as the checkout, or its callbacks cannot be delivered - a
     /// coordinator or handler that nothing else references will be released mid-checkout and the
-    /// result will be lost. A dropped listener is reported as `Listener Unavailable` in analytics
-    /// and captured to Sentry rather than failing silently, but the result is still gone.
+    /// result will be lost. A dropped listener is captured to Sentry and sent as `had_listener: false`
+    /// on the analytics close rather than failing silently, but the result is still gone.
     ///
     /// Callbacks are delivered on the main queue. They must not throw or trap: Swift has no
     /// catchable exception mechanism, so a force-unwrap of nil or an out-of-range index inside a

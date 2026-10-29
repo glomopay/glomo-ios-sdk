@@ -23,8 +23,8 @@ final class MixpanelAnalyticsTracker: AnalyticsTracking {
     private let now: () -> Date
     private let lock = NSLock()
     private var flowType: String
-    private var checkoutURL: URL?
     private var networkSnapshotProperties: [String: Any?] = [:]
+    private var reportedOnceKeys: Set<String> = []
 
     init(
         config: GlomoPayConfig,
@@ -50,42 +50,40 @@ final class MixpanelAnalyticsTracker: AnalyticsTracking {
         lock.glomoWithLock { self.flowType = flowType }
     }
 
-    func updateCheckoutURL(_ url: URL) {
-        lock.glomoWithLock { checkoutURL = url }
-    }
-
     func updateNetworkSnapshotProperties(_ properties: [String: Any?]) {
         cacheNetworkSnapshot(from: properties)
     }
 
     func track(_ event: String, properties: [String: Any?]) {
+        if let onceKey = AnalyticsCatalogue.onceKey(event: event, properties: properties) {
+            let isFirst = lock.glomoWithLock { reportedOnceKeys.insert(onceKey).inserted }
+            guard isFirst else { return }
+        }
         errorReporter.addBreadcrumb(category: "analytics", message: event, data: ["event_name": event])
         let date = now()
-        let state = lock.glomoWithLock { (flowType, checkoutURL, networkSnapshotProperties) }
-        let analyticsOrderID = config.checkoutId
-        var common = deviceProperties()
-        common.merge(state.2) { _, snapshotValue in snapshotValue }
+        let state = lock.glomoWithLock { (flowType, networkSnapshotProperties) }
+        var common = state.1
+        common.merge(properties) { _, new in new }
+        common.merge(deviceProperties()) { _, new in new }
         common.merge([
+            "integration": AnalyticsCatalogue.integration,
+            "platform": AnalyticsCatalogue.platform,
             "sdk_version": sdkVersion,
-            "sdk_source": "glomo-ios-sdk",
-            "platform": "ios",
-            "surface": "ios-sdk",
-            "flow_type": state.0,
-            "order_id": analyticsOrderID,
-            "subscription_id": config.subscriptionId,
             "public_key": config.publicKey,
-            "checkout_url": AnalyticsSanitizer.navigationURL(state.1),
             "dev_mode": SDKBuildFlags.internalBuild,
-            "mock_mode": ConfigManager.isTestOrMock(config.publicKey),
+            "resource_id": config.checkoutId,
             "time": Int64(date.timeIntervalSince1970 * 1_000),
-            "timestamp": Self.formattedTimestamp(date),
-            "session_id": sessionID,
             "journey_id": sessionID,
             "$device_id": sessionID,
             "distinct_id": "$device:\(sessionID)",
             "$insert_id": UUID().uuidString.lowercased(),
         ]) { _, new in new }
-        common.merge(properties) { _, new in new }
+        if let journey = Self.journey(flowType: state.0, isSubscription: config.isSubscription) {
+            common["journey"] = journey
+        }
+        if let keyMode = Self.keyMode(publicKey: config.publicKey) {
+            common["key_mode"] = keyMode
+        }
         cacheNetworkSnapshot(from: properties)
         let sanitizedProperties = AnalyticsSanitizer.properties(common)
         let analyticsEvent = AnalyticsEvent(
@@ -106,16 +104,20 @@ final class MixpanelAnalyticsTracker: AnalyticsTracking {
         }
     }
 
-    private static let timestampFormatter: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        formatter.timeZone = TimeZone(identifier: "Asia/Kolkata")
-        return formatter
-    }()
-    private static let timestampLock = NSLock()
+    private static func keyMode(publicKey: String) -> String? {
+        if publicKey.hasPrefix("live_") { return "live" }
+        if publicKey.hasPrefix("test_") || publicKey.hasPrefix("mock_") { return "test" }
+        return nil
+    }
 
-    private static func formattedTimestamp(_ date: Date) -> String {
-        timestampLock.glomoWithLock { timestampFormatter.string(from: date) }
+    private static func journey(flowType: String, isSubscription: Bool) -> String? {
+        if isSubscription { return "subscription" }
+        switch flowType.lowercased() {
+        case "standard": return "standard"
+        case "lrs": return "lrs"
+        case "subscription", "subscriptions": return "subscription"
+        default: return nil
+        }
     }
 
     private func cacheNetworkSnapshot(from properties: [String: Any?]) {

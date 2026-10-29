@@ -62,6 +62,10 @@ public final class GlomoPayApiClient {
     }
 
     public func fetchOrder(_ orderId: String) async throws -> [String: Any] {
+        try await fetchOrderResponse(orderId).order
+    }
+
+    func fetchOrderResponse(_ orderId: String) async throws -> (order: [String: Any], statusCode: Int) {
         let endpoint = baseURL
             .appendingPathComponent("api")
             .appendingPathComponent("public")
@@ -88,7 +92,7 @@ public final class GlomoPayApiClient {
                   let dictionary = object as? [String: Any] else {
                 throw GlomoPayAPIError.invalidOrderResponse
             }
-            return dictionary
+            return (dictionary, statusCode)
         } catch let error as GlomoPayAPIError {
             // The typed case travels as-is: the caller decides which callback it reports through.
             GlomoPayLogger.error("Order fetch failed", error: error)

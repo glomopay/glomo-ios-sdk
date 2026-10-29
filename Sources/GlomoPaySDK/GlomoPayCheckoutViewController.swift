@@ -28,7 +28,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private var didRetryMainDocument = false
     private var didRetryAfterProcessTermination = false
     private var didTerminate = false
-    private var didTrackSDKInitialization = false
+    private var didTrackSDKLoaded = false
     private var progressObservation: NSKeyValueObservation?
     private var bridgeHandler: GlomoPayJavaScriptBridge?
     private var flowBridgeHandler: GlomoPayJavaScriptBridge?
@@ -50,7 +50,6 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     var scriptEvaluator: @MainActor (WKWebView, String) -> Void = { webView, script in
         webView.evaluateJavaScript(script, completionHandler: nil)
     }
-    private var performanceSnapshotCollector: DevicePerformanceSnapshotCollector?
     private var networkSnapshotCollector: IOSNetworkPathSnapshotCollector?
     /// What `config.appColorScheme` currently resolves to. Held so a host appearance change can
     /// be told from a trait change that moved something else - a size class, a rotation.
@@ -61,8 +60,9 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     /// The carousel URL the SDK loaded, kept so a page-finished can be matched to its origin.
     private var carouselURL: URL?
     private var didStartCheckout = false
+    private var didShowCheckout = false
+    private var isDisappearingInteractively = false
     private var openFunnel = CheckoutOpenFunnel()
-    private var openStartedAt: Date?
     private var openWatchdog: Task<Void, Never>?
     private var renderWatchdog: Task<Void, Never>?
     var flowTypeState: CheckoutFlowTypeState
@@ -136,16 +136,14 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
 
     public override func viewDidLoad() {
         super.viewDidLoad()
-        performanceSnapshotCollector = DevicePerformanceSnapshot.makeCollector()
         resolvedColorScheme = appColorScheme.resolve(hostIsDark: hostIsDark)
         registerForColorSchemeChanges()
         view.backgroundColor = .systemBackground
         eventRouter = GlomoPayEventRouter(
             listener: listener,
-            devMode: SDKBuildFlags.internalBuild,
             onComplete: { [weak self] result in self?.handleResult(result) },
             onWindowOpen: { [weak self] url in self?.openFlow(url) },
-            onWindowClose: { [weak self] in self?.closeFlow() },
+            onWindowClose: { [weak self] in self?.closeFlowFromPage() },
             onBridgeReady: { [weak self] in self?.markBridgeReady() },
             analytics: analytics,
             errorReporter: errorReporter
@@ -170,14 +168,21 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         }
     }
 
+    public override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        isDisappearingInteractively = transitionCoordinator?.isInteractive == true
+    }
+
     public override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         progressObservation?.invalidate()
+        guard !didTerminate, !isDisappearingInteractively,
+              isBeingDismissed || navigationController?.isBeingDismissed == true else { return }
+        analytics.trackCheckoutClosed(.merchant, page: visiblePage)
     }
 
     deinit {
         progressObservation?.invalidate()
-        performanceSnapshotCollector?.restoreBatteryMonitoring()
     }
 
     private func configureWebView() {
@@ -303,28 +308,20 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     // MARK: - Checkout-open funnel
 
     private func advanceOpenStep(_ step: CheckoutOpenStep) {
-        guard openFunnel.advance(step) else { return }
-        switch step {
-        case .webViewCreated:
-            analytics.track(AnalyticsEventName.checkoutWebViewCreated, properties: ["step": step.wireName])
-        case .bridgeReady:
-            analytics.track(AnalyticsEventName.checkoutBridgeReady, properties: ["step": step.wireName])
-        case .urlResolved, .navigationStarted, .navigationFinished:
-            // Already reported by their own navigation events; the funnel only records them.
-            break
-        }
+        guard openFunnel.advance(step), step == .bridgeReady else { return }
+        didShowCheckout = true
+        analytics.trackPageViewed(.checkout)
     }
 
     /// The outer budget: nothing behind the spinner used to clear it, so a page that never
     /// rendered left the user waiting with no error, no retry and no callback.
     private func startOpenWatchdog() {
-        openStartedAt = Date()
         openWatchdog?.cancel()
         let budget = CheckoutOpenBudget.watchdog
         openWatchdog = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(budget * 1_000_000_000))
             guard let self, !Task.isCancelled, !self.didTerminate else { return }
-            self.reportOpenTimeout(reason: "watchdog", budget: budget)
+            self.reportOpenTimeout()
         }
     }
 
@@ -336,24 +333,22 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         renderWatchdog = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(budget * 1_000_000_000))
             guard let self, !Task.isCancelled, !self.didTerminate, !self.openFunnel.didOpen else { return }
-            self.reportOpenTimeout(reason: "render_timeout", budget: budget)
-            self.deliverConnectionError(ConnectionError(
-                type: .timeout,
-                message: GlomoPayStrings.checkoutTakingLonger,
-                failedURL: self.currentURL,
-                shouldAutoClose: false
-            ))
+            self.reportOpenTimeout()
+            self.deliverConnectionError(
+                ConnectionError(
+                    type: .timeout,
+                    message: GlomoPayStrings.checkoutTakingLonger,
+                    failedURL: self.currentURL,
+                    shouldAutoClose: false
+                ),
+                page: .openTimeout
+            )
         }
     }
 
-    private func reportOpenTimeout(reason: String, budget: TimeInterval) {
+    private func reportOpenTimeout() {
         guard let lastStep = openFunnel.timeout() else { return }
-        analytics.track(AnalyticsEventName.checkoutOpenTimeout, properties: [
-            "last_step": lastStep,
-            "reason": reason,
-            "timeout_ms": Int(budget * 1_000),
-            "elapsed_ms": openStartedAt.map { Int(Date().timeIntervalSince($0) * 1_000) },
-        ])
+        analytics.trackCheckoutFailed(.openTimeout(lastStep: lastStep))
     }
 
     private func markBridgeReady() {
@@ -363,11 +358,6 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         // defined - it just catches the cases where it does. What actually closes that window is
         // the page seeding from the parked `window.__glomoColorScheme__` on mount; see KAN-9555.
         if let webView { pushColorScheme(to: webView, loaded: webView.url, expected: currentURL) }
-        if openFunnel.openedAfterTimeout {
-            analytics.track(AnalyticsEventName.checkoutOpenedAfterTimeout, properties: [
-                "elapsed_ms": openStartedAt.map { Int(Date().timeIntervalSince($0) * 1_000) },
-            ])
-        }
         cancelOpenWatchdogs()
         loadingView.isHidden = true
         progressView.isHidden = true
@@ -396,19 +386,13 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     }
 
     private func continueCheckout() {
-        if !didTrackSDKInitialization {
-            didTrackSDKInitialization = true
-            var properties = performanceSnapshotCollector?.collect()
-                ?? DevicePerformanceSnapshot.emptyProperties
-            analytics.track(AnalyticsEventName.sdkInitialized, properties: properties)
-            analytics.track(AnalyticsEventName.sdkLoaded, properties: ["integration": "ios_sdk"])
+        if !didTrackSDKLoaded {
+            didTrackSDKLoaded = true
+            analytics.trackSDKLoaded()
         }
         let errors = Validator.validate(config: config)
         guard errors.isEmpty else {
-            analytics.track(AnalyticsEventName.sdkValidationFailed, properties: [
-                "failure_reason": validationFailureReason(errors.first),
-                "error_message": errors.first?.message,
-            ])
+            analytics.trackCheckoutFailed(.invalidInitParams(AnalyticsInvalidInitParams(errors.first)))
             deliverSdkErrors(errors)
             return
         }
@@ -416,13 +400,11 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         let compliance = DeviceComplianceChecker().check(
             strict: CompliancePolicy.requiresStrictCheck(config)
         )
-        analytics.track(
-            AnalyticsEventName.deviceComplianceChecked,
-            properties: ComplianceAnalyticsProperties.make(result: compliance)
-        )
         guard compliance.isCompliant else {
-            let blockReason = compliance.isDebuggerAttached ? "debugger_attached" : "jailbreak_detected"
-            analytics.track(AnalyticsEventName.deviceComplianceBlocked, properties: ["block_reason": blockReason])
+            let blockReason: AnalyticsComplianceBlock = compliance.isDebuggerAttached
+                ? .debuggerAttached
+                : .jailbreakDetected
+            analytics.trackCheckoutFailed(.complianceBlocked(blockReason))
             let message = compliance.isDebuggerAttached
                 ? "Device is being debugged."
                 : "Device is rooted or jailbroken."
@@ -442,6 +424,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
                 journeyID: self.sessionID,
                 colorScheme: self.resolvedColorScheme
             ) else {
+                self.analytics.trackCheckoutFailed(.invalidInitParams(.invalidServer))
                 await self.showConnectionError(ConnectionError(type: .unknown, message: "Unable to build checkout URL"))
                 return
             }
@@ -462,26 +445,20 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             flowTypeState.resolve(resolved)
             analytics.updateFlowType(resolved)
             errorReporter.updateFlowType(resolved)
-            analytics.track(AnalyticsEventName.orderTypeResolved, properties: ["resolved_type": resolved])
             return resolved
         }
 
-        analytics.track(AnalyticsEventName.orderTypeDetectionStarted)
         do {
-            let order = try await apiClient.fetchOrder(config.orderId!)
-            let type = ConfigManager.detectOrderType(order)
+            let response = try await apiClient.fetchOrderResponse(config.orderId!)
+            let type = ConfigManager.detectOrderType(response.order)
             flowTypeState.resolve(type)
             analytics.updateFlowType(type)
             errorReporter.updateFlowType(type)
-            analytics.track(AnalyticsEventName.orderTypeResolved, properties: ["resolved_type": type])
+            analytics.trackOrderFetchSucceeded(httpStatus: response.statusCode)
             return type
         } catch {
             let reason = Self.orderFetchFailureReason(error)
-            analytics.track(AnalyticsEventName.orderTypeDetectionFailed, properties: [
-                // Reason only. The response body used to travel here as localizedDescription,
-                // which shipped an order payload to Mixpanel unredacted.
-                "failure_reason": reason,
-            ])
+            trackOrderFetchFailure(error)
             errorReporter.capture(
                 operation: "order_type_detection",
                 error: error,
@@ -525,11 +502,20 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         }
     }
 
+    private func trackOrderFetchFailure(_ error: Error) {
+        if let apiError = error as? GlomoPayAPIError, let analyticsError = AnalyticsAPIError(apiError) {
+            var httpStatus: Int?
+            if case let .failedToLoadOrder(statusCode) = apiError { httpStatus = statusCode }
+            analytics.trackOrderFetchFailed(analyticsError, httpStatus: httpStatus)
+        }
+        guard !didTerminate else { return }
+        analytics.trackCheckoutFailed(.orderFetchFailed(AnalyticsOrderFetchFailure(error)))
+    }
+
     @MainActor
     private func deliverOrderConnectionError(_ error: ConnectionError) {
         loadingView.isHidden = true
         progressView.isHidden = true
-        analytics.track(AnalyticsEventName.connectionError, properties: connectionErrorProperties(error))
         errorReporter.capture(
             operation: "order_fetch_connection",
             error: error,
@@ -556,10 +542,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         currentURL = url
         flowTypeState.resolve(orderType)
         analytics.updateFlowType(orderType)
-        analytics.updateCheckoutURL(url)
         errorReporter.updateFlowType(orderType)
-        analytics.track(AnalyticsEventName.checkoutURLResolved, properties: ["url": AnalyticsSanitizer.navigationURL(url)])
-        analytics.track(AnalyticsEventName.checkoutStarted)
         advanceOpenStep(.urlResolved)
         startRenderWatchdog()
         webView.load(mainDocumentRequest(for: url))
@@ -588,18 +571,12 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         if webView === flowWebView {
             flowLoadingView?.isHidden = false
             flowProgressView?.isHidden = false
-            analytics.track(AnalyticsEventName.redirectPageStarted, properties: [
-                "url": AnalyticsSanitizer.bankRedirectURL(webView.url),
-            ])
             return
         }
         loadingView.isHidden = false
         progressView.isHidden = false
         loadingLabel.text = GlomoPayStrings.loadingCheckout
         advanceOpenStep(.navigationStarted)
-        analytics.track(AnalyticsEventName.navigationStarted, properties: [
-            "url": AnalyticsSanitizer.navigationURL(webView.url),
-        ])
     }
 
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
@@ -618,15 +595,9 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         if webView === flowWebView {
             flowLoadingView?.isHidden = true
             flowProgressView?.isHidden = true
-            analytics.track(AnalyticsEventName.redirectPageFinished, properties: [
-                "url": AnalyticsSanitizer.bankRedirectURL(webView.url),
-            ])
             return
         }
         advanceOpenStep(.navigationFinished)
-        analytics.track(AnalyticsEventName.navigationFinished, properties: [
-            "url": AnalyticsSanitizer.navigationURL(webView.url),
-        ])
         pushColorScheme(to: webView, loaded: webView.url, expected: currentURL)
         // Load-bearing: this starts the round-trip that ends in markBridgeReady(), the only thing
         // that hides the loading view. CheckoutControllerTests pins it.
@@ -668,19 +639,18 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         }
         if let response = navigationResponse.response as? HTTPURLResponse,
            !(200..<400).contains(response.statusCode) {
-            let isFlow = webView === flowWebView
-            analytics.track(AnalyticsEventName.webViewHTTPError, properties: [
-                "status_code": response.statusCode,
-                "url": isFlow
-                    ? AnalyticsSanitizer.bankRedirectURL(response.url)
-                    : AnalyticsSanitizer.navigationURL(response.url),
-                "webview_type": isFlow ? "flow" : "main",
-            ])
             let error = ConnectionError.fromHTTPStatus(response.statusCode, failedURL: response.url)
             if webView === flowWebView {
-                showFlowError(error)
+                analytics.trackActionFailed(.webViewLoad(
+                    .httpError,
+                    webViewType: .flow,
+                    httpStatus: response.statusCode,
+                    isRecoverable: error.isRecoverable,
+                    urlOrigin: AnalyticsSanitizer.bankRedirectURL(response.url)
+                ))
+                showFlowError(error, as: .httpError)
             } else {
-                deliverConnectionError(error)
+                deliverConnectionError(error, page: .httpError, failure: .httpError)
             }
         }
         decisionHandler(.allow)
@@ -702,23 +672,14 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             // on a bank page that appears to have done nothing.
             guard FlowNavigationPolicy.allows(navigationAction.request.url) else {
                 let scheme = FlowNavigationPolicy.scheme(of: navigationAction.request.url)
-                analytics.track(AnalyticsEventName.nonHTTPNavigationAttempted, properties: [
-                    "scheme": scheme,
-                    "webview_type": "flow",
-                ])
+                analytics.trackActionFailed(.navigation(.nonHTTPScheme, scheme: scheme, webViewType: .flow))
                 GlomoPayLogger.log("Blocked non-HTTP bank navigation: \(scheme)")
                 decisionHandler(.cancel)
                 return
             }
-            analytics.track(AnalyticsEventName.redirectURLChange, properties: [
-                "url": AnalyticsSanitizer.bankRedirectURL(navigationAction.request.url),
-            ])
             decisionHandler(.allow)
             return
         }
-        analytics.track(AnalyticsEventName.navigationURLChange, properties: [
-            "url": AnalyticsSanitizer.navigationURL(navigationAction.request.url),
-        ])
         decisionHandler(.allow)
     }
 
@@ -733,10 +694,6 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         }
         if nsError.code == -1017 && !didRetryMainDocument, let retryURL = url ?? currentURL {
             didRetryMainDocument = true
-            analytics.track(AnalyticsEventName.iOSDocumentRetry, properties: [
-                "url": AnalyticsSanitizer.navigationURL(retryURL),
-                "error_code": nsError.code,
-            ])
             // Stamped like every other main-document load - this one builds its own request
             // rather than going through mainDocumentRequest, so it has to do it itself.
             var request = URLRequest(url: withColorScheme(retryURL, resolvedColorScheme))
@@ -754,7 +711,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             failedURL: url,
             domain: nsError.domain
         )
-        deliverConnectionError(connectionError)
+        deliverConnectionError(connectionError, page: .connectionError, failure: .connectionError)
     }
 
     private func openFlow(_ url: URL) {
@@ -980,11 +937,11 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             scriptEvaluator(target, script)
         }
 
-        analytics.track(AnalyticsEventName.colorSchemeChanged, properties: [
-            "color_scheme": resolved.wireName,
-            "previous_color_scheme": previous.wireName,
-            "app_color_scheme": appColorScheme.rawValue,
-        ])
+        analytics.trackColorSchemeChanged(
+            newValue: resolved.wireName,
+            previousValue: previous.wireName,
+            appColorScheme: appColorScheme.rawValue
+        )
     }
 
     /// Re-sends the scheme to a page that has just loaded, on our own origins only.
@@ -1063,7 +1020,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private func handleCarouselFailure(_ error: Error) {
         let nsError = error as NSError
         guard !ConnectionError.isCancellation(domain: nsError.domain, errorCode: nsError.code) else { return }
-        analytics.track(AnalyticsEventName.educationStepsFailed, properties: ["reason": "webview_error"])
+        analytics.trackActionFailed(.educationCarousel(.webViewError))
         setCarouselState(.failed)
     }
 
@@ -1071,7 +1028,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         guard carouselState != state else { return }
         carouselState = state
         if state == .hasContent {
-            analytics.track(AnalyticsEventName.educationStepsShown, properties: ["source": "carousel"])
+            analytics.trackPageViewed(.educationCarousel)
         }
         applyCarouselLayout()
     }
@@ -1126,15 +1083,13 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     // and it is the same on every supported OS.
     //
     // The cost of this position, recorded so it is not rediscovered as a bug: no picker
-    // telemetry (the `file.input` bridge event still reports File Upload Requested from the
-    // page's own click, which is where the accept types come from) and no control over
+    // telemetry (the hosted page tracks its own file-input click) and no control over
     // accept-type behaviour - which v2.0.0 asks for anyway, since `accept` selects which picker
     // opens and never restricts what may be chosen. Revisit only as the full picker: an action
     // sheet with camera / photo library / files, PHPickerViewController, the camera permission
     // and refusal callback, and the capture caps that keep uploads under the bank's limit.
 
     private func closeFlow() {
-        let hadFlow = flowWebView != nil || flowOverlay != nil
         // Delegate first, then stop: stopLoading() delivers NSURLErrorCancelled, and clearing
         // the delegate afterwards let that cancellation arrive against an overlay already being
         // torn down.
@@ -1153,9 +1108,13 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         flowProgressView = nil
         flowErrorView?.removeFromSuperview()
         flowErrorView = nil
-        if hadFlow {
-            analytics.track(AnalyticsEventName.redirectClosed, properties: ["source": "flow"])
+    }
+
+    private func closeFlowFromPage() {
+        if let flowWebView {
+            analytics.trackBankRedirectSubmitted(urlOrigin: AnalyticsSanitizer.bankRedirectURL(flowWebView.url))
         }
+        closeFlow()
     }
 
     private func handleFlowError(_ error: Error, url: URL?) {
@@ -1170,8 +1129,13 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             failedURL: url,
             domain: nsError.domain
         )
-        showFlowError(connectionError)
-        analytics.track(AnalyticsEventName.connectionError, properties: connectionErrorProperties(connectionError))
+        analytics.trackActionFailed(.webViewLoad(
+            .connectionError,
+            webViewType: .flow,
+            isRecoverable: connectionError.isRecoverable,
+            urlOrigin: AnalyticsSanitizer.bankRedirectURL(url)
+        ))
+        showFlowError(connectionError, as: .connectionError)
         errorReporter.capture(
             operation: "flow_webview_connection",
             error: connectionError,
@@ -1179,7 +1143,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         )
     }
 
-    private func showFlowError(_ error: ConnectionError) {
+    private func showFlowError(_ error: ConnectionError, as failure: AnalyticsLoadError) {
         flowLoadingView?.isHidden = true
         flowProgressView?.isHidden = true
         guard let overlay = flowOverlay, let flow = flowWebView else { return }
@@ -1199,9 +1163,11 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             panel.bottomAnchor.constraint(equalTo: flow.bottomAnchor),
         ])
         flowErrorView = panel
+        analytics.trackPageViewed(.error, errorCode: AnalyticsErrorPageCode(failure))
     }
 
     @objc private func flowRetryTapped() {
+        analytics.trackCTAClicked(.retry, page: visiblePage)
         flowErrorView?.removeFromSuperview()
         flowErrorView = nil
         flowLoadingView?.isHidden = false
@@ -1242,10 +1208,12 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     /// twice; there is one control on the overlay and it always means close.
     @objc private func flowBackTapped() {
         guard flowWebView != nil else { return }
+        analytics.trackCTAClicked(.backToCheckout, page: visiblePage)
         closeFlow()
     }
 
     private func handleResult(_ result: GlomoPayResult) {
+        if !didTerminate { trackCheckoutClosed(for: result) }
         didTerminate = true
         cancelOpenWatchdogs()
         closeFlow()
@@ -1256,15 +1224,48 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         }
     }
 
-    private func showConnectionError(_ error: ConnectionError) async {
-        await MainActor.run { self.deliverConnectionError(error) }
+    private func trackCheckoutClosed(for result: GlomoPayResult) {
+        let page = visiblePage
+        let hadListener = listener != nil
+        switch result {
+        case .success:
+            analytics.trackCheckoutClosed(.sdk, page: page, paymentEvent: .paymentSuccess, hadListener: hadListener)
+        case .failure:
+            analytics.trackCheckoutClosed(.sdk, page: page, paymentEvent: .paymentFailure, hadListener: hadListener)
+        case let .userJourney(journey):
+            switch journey.journeyType {
+            case .bankTransferSubmitted:
+                analytics.trackCheckoutClosed(
+                    .sdk,
+                    page: page,
+                    paymentEvent: .bankTransferSubmitted,
+                    hadListener: hadListener
+                )
+            }
+        case .cancelled:
+            analytics.trackCheckoutClosed(.userDismiss, page: page)
+        }
     }
 
-    private func deliverConnectionError(_ error: ConnectionError) {
+    private var visiblePage: AnalyticsPageName {
+        if errorView != nil || flowErrorView != nil { return .error }
+        if flowOverlay != nil { return .bankRedirect }
+        return openFunnel.didOpen ? .checkout : .loading
+    }
+
+    private func showConnectionError(_ error: ConnectionError) async {
+        await MainActor.run { self.deliverConnectionError(error, page: .other) }
+    }
+
+    private func deliverConnectionError(
+        _ error: ConnectionError,
+        page: AnalyticsErrorPageCode,
+        failure: AnalyticsLoadError? = nil
+    ) {
         guard !didTerminate else { return }
         loadingView.isHidden = true
         progressView.isHidden = true
-        analytics.track(AnalyticsEventName.connectionError, properties: connectionErrorProperties(error))
+        if let failure { trackConnectionFailure(error, as: failure) }
         errorReporter.capture(
             operation: "webview_connection",
             error: error,
@@ -1274,7 +1275,23 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         showErrorView(error)
         if config.autoCloseOnConnectionError && error.shouldAutoClose {
             terminate(source: .connectionError)
+        } else {
+            analytics.trackPageViewed(.error, errorCode: page)
         }
+    }
+
+    private func trackConnectionFailure(_ error: ConnectionError, as failure: AnalyticsLoadError) {
+        guard didShowCheckout else {
+            analytics.trackCheckoutFailed(.connectionError(AnalyticsConnectionFailure(error)))
+            return
+        }
+        analytics.trackActionFailed(.webViewLoad(
+            failure,
+            webViewType: .main,
+            httpStatus: error.statusCode,
+            isRecoverable: error.isRecoverable,
+            urlOrigin: AnalyticsSanitizer.urlOrigin(error.failedURL)
+        ))
     }
 
     private func showErrorView(_ error: ConnectionError) {
@@ -1351,6 +1368,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     }
 
     @objc private func retryTapped() {
+        analytics.trackCTAClicked(.retry, page: visiblePage)
         errorView?.removeFromSuperview()
         errorView = nil
         didRetryMainDocument = false
@@ -1388,12 +1406,11 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     /// `listener` is weak on purpose - the SDK does not keep a merchant object alive - but that
     /// means a host passing something it does not otherwise retain (a coordinator, a short-lived
     /// handler) could run a checkout to completion and be told nothing at all. That is now
-    /// visible in analytics and Sentry. The retention contract is documented at
-    /// `GlomoPaySDK.startCheckout` and in the README.
+    /// visible in Sentry, and as `had_listener` on the analytics close. The retention contract
+    /// is documented at `GlomoPaySDK.startCheckout` and in the README.
     @discardableResult
     private func deliverToListener(_ deliver: (GlomoPayListener) -> Void) -> Bool {
         guard let listener else {
-            analytics.track(AnalyticsEventName.listenerUnavailable)
             errorReporter.capture(
                 operation: "listener_unavailable",
                 error: CheckoutMonitoringError.listenerReleased,
@@ -1407,22 +1424,17 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
 
     private func terminate(source: TerminationSource) {
         guard !didTerminate else { return }
+        analytics.trackCheckoutClosed(Self.closeTrigger(for: source), page: visiblePage)
         didTerminate = true
         cancelOpenWatchdogs()
-        analytics.track(AnalyticsEventName.paymentTerminated, properties: [
-            "termination_source": analyticsTerminationSource(source),
-        ])
         deliverToListener { $0.onPaymentTerminate(source) }
         flushTerminalErrorReports()
         dismiss(animated: true)
     }
 
     private func deliverSdkErrors(_ errors: [SdkError]) {
+        if !didTerminate { analytics.trackCheckoutClosed(.sdk, page: visiblePage) }
         didTerminate = true
-        analytics.track(AnalyticsEventName.sdkError, properties: [
-            "error_count": errors.count,
-            "errors": SDKErrorAnalyticsSerializer.serialize(errors),
-        ])
         if let first = errors.first {
             errorReporter.capture(operation: "sdk_error", error: first, context: ["error_type": first.type.rawValue])
         }
@@ -1438,19 +1450,13 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         if webView === carouselWebView {
             // The carousel is decoration: losing it must not touch the payment WebViews.
-            analytics.track(AnalyticsEventName.educationStepsFailed, properties: [
-                "reason": "content_process_terminated",
-            ])
+            analytics.trackActionFailed(.educationCarousel(.contentProcessTerminated))
             setCarouselState(.failed)
             destroyCarousel()
             return
         }
         let isFlow = webView === flowWebView
-        analytics.track(AnalyticsEventName.webViewError, properties: [
-            "error_type": "content_process_terminated",
-            "error_message": "WKWebView content process terminated",
-            "webview_type": isFlow ? "flow" : "main",
-        ])
+        analytics.trackActionFailed(.webViewLoad(.contentProcessTerminated, webViewType: isFlow ? .flow : .main))
         errorReporter.capture(
             operation: "webview_process",
             error: CheckoutMonitoringError.webContentProcessTerminated,
@@ -1475,39 +1481,22 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             loadingLabel.text = GlomoPayStrings.recoveringCheckout
             webView.load(mainDocumentRequest(for: currentURL))
         case .reportMainFailure:
-            deliverConnectionError(ConnectionError(
-                type: .unknown,
-                message: "The checkout WebView stopped unexpectedly.",
-                failedURL: currentURL
-            ))
+            deliverConnectionError(
+                ConnectionError(
+                    type: .unknown,
+                    message: "The checkout WebView stopped unexpectedly.",
+                    failedURL: currentURL
+                ),
+                page: .contentProcessTerminated
+            )
         }
     }
 
-    private func connectionErrorProperties(_ error: ConnectionError) -> [String: Any?] {
-        [
-            "error_code": error.errorCode,
-            "error_description": error.message,
-            "url": AnalyticsSanitizer.navigationURL(error.failedURL),
-            "is_recoverable": error.isRecoverable,
-        ]
-    }
-
-    private func validationFailureReason(_ error: SdkError?) -> String {
-        switch error?.field {
-        case "publicKey": return "invalid_public_key"
-        case "orderId": return "missing_order_id"
-        case "subscriptionId": return "invalid_subscription_id"
-        case "identifier": return "missing_order_id"
-        case "server": return "invalid_checkout_url"
-        default: return "validation_error"
-        }
-    }
-
-    private func analyticsTerminationSource(_ source: TerminationSource) -> String {
+    private static func closeTrigger(for source: TerminationSource) -> AnalyticsCloseTrigger {
         switch source {
-        case .userDismiss: return "user_dismiss"
-        case .programmatic: return "checkout_closed"
-        case .connectionError: return "checkout_closed"
+        case .userDismiss: return .userDismiss
+        case .programmatic: return .merchant
+        case .connectionError: return .sdk
         }
     }
 }

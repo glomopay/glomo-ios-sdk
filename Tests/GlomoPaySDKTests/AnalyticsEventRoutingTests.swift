@@ -3,11 +3,10 @@ import XCTest
 @testable import GlomoPaySDK
 
 final class AnalyticsEventRoutingTests: XCTestCase {
-    func testPaymentAndEducationBridgeMessagesTrackExpectedEvents() {
+    func testPendingIsNotTrackedAndOnlyTheEducationSignalIsAPageView() {
         let analytics = RecordingAnalyticsTracker()
         let router = GlomoPayEventRouter(
             listener: nil,
-            devMode: false,
             onComplete: { _ in },
             analytics: analytics,
             errorReporter: NoOpSDKErrorReporter()
@@ -20,8 +19,6 @@ final class AnalyticsEventRoutingTests: XCTestCase {
                 "payload": ["orderId": "order_123", "paymentId": "pay_123"],
             ],
         ])
-        // The page's contract is { type: 'lrs.has_education_steps', value: true }, sent only when
-        // there is content. Neither false nor the { event, hasContent } shape is a signal.
         for notSignal: [String: Any] in [
             ["type": "lrs.has_education_steps", "value": false],
             ["type": "lrs.has_education_steps", "hasContent": true],
@@ -29,111 +26,126 @@ final class AnalyticsEventRoutingTests: XCTestCase {
         ] {
             router.handle(envelope: ["type": "message", "data": notSignal])
         }
-        XCTAssertEqual(analytics.events.map(\.name), [AnalyticsEventName.paymentPending])
+        XCTAssertTrue(analytics.events.isEmpty)
 
         router.handle(envelope: [
             "type": "message",
             "data": ["type": "lrs.has_education_steps", "value": true],
         ])
 
-        XCTAssertEqual(analytics.events.map(\.name), [
-            AnalyticsEventName.paymentPending,
-            AnalyticsEventName.educationStepsShown,
-        ])
+        XCTAssertEqual(analytics.events.map(\.name), [AnalyticsEventName.sdkPageViewed])
+        XCTAssertEqual(analytics.events.last?.properties["page_name"] as? String, "education_carousel")
     }
 
-    func testMalformedMessageTracksInvalidMessageAndSDKError() throws {
+    func testEducationFailureKeepsTheFixedReasonListAndFallsBackForFreeText() {
         let analytics = RecordingAnalyticsTracker()
         let router = GlomoPayEventRouter(
             listener: nil,
-            devMode: false,
             onComplete: { _ in },
             analytics: analytics,
             errorReporter: NoOpSDKErrorReporter()
         )
 
+        router.handle(envelope: ["type": "message", "data": ["type": "lrs.education_steps_failed"]])
+        router.handle(envelope: [
+            "type": "message",
+            "data": ["type": "lrs.education_steps_failed", "reason": "webview_error"],
+        ])
+        router.handle(envelope: [
+            "type": "message",
+            "data": ["type": "lrs.education_steps_failed_to_show", "reason": "Customer someone@example.com"],
+        ])
+
+        XCTAssertEqual(analytics.events.map(\.name), Array(repeating: AnalyticsEventName.sdkActionFailed, count: 3))
+        XCTAssertEqual(
+            analytics.events.map { $0.properties["error_code"] as? String },
+            ["render_failed", "webview_error", "other"]
+        )
+        XCTAssertTrue(analytics.events.allSatisfy { $0.properties["action_name"] as? String == "education_carousel" })
+    }
+
+    func testMalformedMessageIsNotAnAnalyticsEvent() {
+        let analytics = RecordingAnalyticsTracker()
+        let reporter = RecordingSDKErrorReporter()
+        let router = GlomoPayEventRouter(
+            listener: nil,
+            onComplete: { _ in },
+            analytics: analytics,
+            errorReporter: reporter
+        )
+
         router.handle(body: "not-json")
 
-        XCTAssertEqual(analytics.events.map(\.name), [
-            AnalyticsEventName.invalidMessageReceived,
-            AnalyticsEventName.sdkError,
-            AnalyticsEventName.listenerUnavailable,
-        ])
-        let invalidMessage = try XCTUnwrap(analytics.events.first)
-        XCTAssertFalse(invalidMessage.properties.keys.contains("data"))
-        XCTAssertEqual(invalidMessage.properties["data_type"] as? String, "String")
-        XCTAssertEqual(invalidMessage.properties["top_level_keys"] as? String, "")
-        XCTAssertEqual(invalidMessage.properties["byte_length"] as? Int, 8)
+        XCTAssertTrue(analytics.events.isEmpty)
+        XCTAssertEqual(reporter.operations, ["bridge_message", "listener_unavailable"])
     }
 
     func testSchemaKeyFilteringDropsSensitiveFieldNames() {
         XCTAssertEqual(
-            AnalyticsSanitizer.schemaKeys(["type", "payment_id", "customer_email", "card_number"]),
+            SentryScrubber.schemaKeys(["type", "payment_id", "customer_email", "card_number"]),
             ["payment_id", "type"]
         )
     }
 
-    func testSDKErrorSerializationEscapesMessagesAndPreservesShape() throws {
-        let message = "Invalid fragment: {\"type\":\"a\"}\\next\nline"
-        let serialized = SDKErrorAnalyticsSerializer.serialize([
-            SdkError(type: .unknown, message: message, field: "bridge"),
-        ])
-        let data = try XCTUnwrap(serialized.data(using: .utf8))
-        let payload = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: data) as? [[String: Any]]
-        )
-        let error = try XCTUnwrap(payload.first)
-
-        XCTAssertEqual(error["type"] as? String, "unknown")
-        XCTAssertEqual(error["message"] as? String, message)
-        XCTAssertEqual(error["field"] as? String, "bridge")
-    }
-
-    func testUnknownBridgeMessageTracksUnsupportedFunctionality() {
+    func testUnroutedBridgeMessagesAreNotTracked() {
         let analytics = RecordingAnalyticsTracker()
         let router = GlomoPayEventRouter(
             listener: nil,
-            devMode: false,
             onComplete: { _ in },
             analytics: analytics,
             errorReporter: NoOpSDKErrorReporter()
         )
 
         router.handle(envelope: ["type": "merchant.unsupported_action"])
+        router.handle(envelope: ["type": "file.input", "accept": "application/pdf"])
+        router.handle(envelope: ["type": "console", "level": "log", "message": "hello"])
+        router.handle(envelope: ["type": "message", "data": ["type": "merchant.custom_event"]])
 
-        XCTAssertEqual(analytics.events.last?.name, AnalyticsEventName.unsupportedFunctionalityUsed)
-        XCTAssertEqual(analytics.events.last?.properties["name"] as? String, "merchant.unsupported_action")
+        XCTAssertTrue(analytics.events.isEmpty)
     }
 
-    /// The accept types are reported, not retained: the SDK no longer filters a picker with them,
-    /// so there is nothing to store - and the stored value used to be read a run loop turn before
-    /// it was written.
-    func testFileInputReportsRequestedAcceptTypesWithoutRetainingThem() {
+    func testInvalidSuccessPayloadIsADroppedPaymentPayload() {
+        let analytics = RecordingAnalyticsTracker()
+        var results: [GlomoPayResult] = []
+        let router = GlomoPayEventRouter(
+            listener: nil,
+            onComplete: { results.append($0) },
+            analytics: analytics,
+            errorReporter: NoOpSDKErrorReporter()
+        )
+
+        router.handle(envelope: [
+            "type": "message",
+            "data": ["type": "payment.success", "payload": ["orderId": "order_123456"]],
+        ])
+
+        XCTAssertTrue(results.isEmpty)
+        XCTAssertEqual(analytics.events.map(\.name), [AnalyticsEventName.sdkActionFailed])
+        let properties = analytics.events.first?.properties ?? [:]
+        XCTAssertEqual(properties["action_name"] as? String, "payment_payload")
+        XCTAssertEqual(properties["error_code"] as? String, "dropped")
+        XCTAssertEqual(properties["page_event"] as? String, "payment_success")
+    }
+
+    func testOutcomesAreNotPaymentEventsInTheRouter() {
         let analytics = RecordingAnalyticsTracker()
         let router = GlomoPayEventRouter(
             listener: nil,
-            devMode: false,
             onComplete: { _ in },
             analytics: analytics,
             errorReporter: NoOpSDKErrorReporter()
         )
 
         router.handle(envelope: [
-            "type": "file.input",
-            "accept": " application/pdf, image/* ",
+            "type": "message",
+            "data": [
+                "type": "payment.success",
+                "payload": ["orderId": "order_123456", "paymentId": "pay_123456", "signature": "signed"],
+            ],
         ])
 
-        XCTAssertEqual(analytics.events.last?.name, AnalyticsEventName.fileUploadRequested)
-        XCTAssertEqual(
-            analytics.events.last?.properties["accept_types"] as? String,
-            "application/pdf, image/*"
-        )
+        XCTAssertTrue(analytics.events.isEmpty)
     }
-
-    // The accept-type to UTType resolver is gone with the document picker: the SDK does not
-    // implement runOpenPanelWith, so WebKit owns the sheet and nothing maps accept types to
-    // content types. v2.0.0's position is that accept selects which picker opens and never
-    // restricts what may be chosen, so there is nothing to reintroduce here.
 
     func testWindowOpenRejectsNonHTTPURLsAndReportsTheContractBreak() {
         let analytics = RecordingAnalyticsTracker()
@@ -141,7 +153,6 @@ final class AnalyticsEventRoutingTests: XCTestCase {
         var opened: [URL] = []
         let router = GlomoPayEventRouter(
             listener: nil,
-            devMode: false,
             onComplete: { _ in },
             onWindowOpen: { opened.append($0) },
             analytics: analytics,
@@ -159,13 +170,21 @@ final class AnalyticsEventRoutingTests: XCTestCase {
         ] {
             router.handle(envelope: ["type": "window.open", "url": rawURL])
         }
-        router.handle(envelope: ["type": "window.open", "url": "https://bank.example/3ds"])
+        router.handle(envelope: ["type": "window.open", "url": "https://bank.example/3ds?otp=123456"])
 
-        XCTAssertEqual(opened.map(\.absoluteString), ["https://bank.example/3ds"])
+        XCTAssertEqual(opened.map(\.absoluteString), ["https://bank.example/3ds?otp=123456"])
         XCTAssertEqual(reporter.operations.filter { $0 == "window_open_rejected" }.count, 7)
-        XCTAssertTrue(
-            analytics.events.contains { $0.name == AnalyticsEventName.nonHTTPNavigationAttempted }
-        )
+        let failures = analytics.events.filter { $0.name == AnalyticsEventName.sdkActionFailed }
+        XCTAssertEqual(failures.count, 7)
+        XCTAssertTrue(failures.allSatisfy {
+            $0.properties["action_name"] as? String == "navigation"
+                && $0.properties["error_code"] as? String == "invalid_window_open_url"
+                && $0.properties["webview_type"] as? String == "main"
+        })
+        let pageView = analytics.events.last
+        XCTAssertEqual(pageView?.name, AnalyticsEventName.sdkPageViewed)
+        XCTAssertEqual(pageView?.properties["page_name"] as? String, "bank_redirect")
+        XCTAssertEqual(pageView?.properties["url_origin"] as? String, "https://bank.example")
     }
 
     func testEveryDeclaredAnalyticsEventHasATrackCallSite() throws {
@@ -197,7 +216,7 @@ final class AnalyticsEventRoutingTests: XCTestCase {
         let source = try swiftSource(in: sourcesRoot, excluding: trackerURL)
         let missingCallSites = identifiers.filter { identifier in
             let escapedIdentifier = NSRegularExpression.escapedPattern(for: identifier)
-            let trackPattern = #"\.track\s*\(\s*AnalyticsEventName\."# + escapedIdentifier + #"\b"#
+            let trackPattern = #"(?<![A-Za-z0-9_])track\s*\(\s*AnalyticsEventName\."# + escapedIdentifier + #"\b"#
             return source.range(of: trackPattern, options: .regularExpression) == nil
         }
 
@@ -242,5 +261,4 @@ private final class RecordingAnalyticsTracker: AnalyticsTracking {
         events.append(RecordedEvent(name: event, properties: properties))
     }
     func updateFlowType(_ flowType: String) {}
-    func updateCheckoutURL(_ url: URL) {}
 }

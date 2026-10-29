@@ -335,7 +335,6 @@ final class ContractCoverageTests: XCTestCase {
         let listener = ContractCoverageListener()
         let router = GlomoPayEventRouter(
             listener: listener,
-            devMode: false,
             onComplete: { _ in },
             analytics: NoOpAnalyticsTracker(),
             errorReporter: NoOpSDKErrorReporter()
@@ -361,7 +360,6 @@ final class ContractCoverageTests: XCTestCase {
         let listener = ContractCoverageListener()
         let router = GlomoPayEventRouter(
             listener: listener,
-            devMode: false,
             onComplete: { _ in },
             analytics: NoOpAnalyticsTracker(),
             errorReporter: NoOpSDKErrorReporter()
@@ -378,7 +376,6 @@ final class ContractCoverageTests: XCTestCase {
         let listener = ContractCoverageListener()
         let router = GlomoPayEventRouter(
             listener: listener,
-            devMode: false,
             onComplete: { _ in },
             analytics: NoOpAnalyticsTracker(),
             errorReporter: NoOpSDKErrorReporter()
@@ -412,7 +409,6 @@ extension ContractCoverageTests {
             var results: [GlomoPayResult] = []
             let router = GlomoPayEventRouter(
                 listener: listener,
-                devMode: false,
                 onComplete: { results.append($0) },
                 analytics: NoOpAnalyticsTracker(),
                 errorReporter: NoOpSDKErrorReporter()
@@ -440,7 +436,6 @@ extension ContractCoverageTests {
         let reporter = OperationRecordingReporter()
         let router = GlomoPayEventRouter(
             listener: listener,
-            devMode: false,
             onComplete: { _ in },
             analytics: NoOpAnalyticsTracker(),
             errorReporter: reporter
@@ -457,7 +452,6 @@ extension ContractCoverageTests {
         var results: [GlomoPayResult] = []
         let router = GlomoPayEventRouter(
             listener: listener,
-            devMode: false,
             onComplete: { results.append($0) },
             analytics: NoOpAnalyticsTracker(),
             errorReporter: NoOpSDKErrorReporter()
@@ -514,7 +508,6 @@ extension ContractCoverageTests {
         var results: [GlomoPayResult] = []
         let router = GlomoPayEventRouter(
             listener: listener,
-            devMode: false,
             onComplete: { results.append($0) },
             analytics: NoOpAnalyticsTracker(),
             errorReporter: reporter
@@ -543,7 +536,6 @@ extension ContractCoverageTests {
         let analytics = OperationRecordingAnalytics()
         let router = GlomoPayEventRouter(
             listener: nil,
-            devMode: false,
             onComplete: { _ in },
             analytics: analytics,
             errorReporter: NoOpSDKErrorReporter()
@@ -557,14 +549,13 @@ extension ContractCoverageTests {
         // It used to emit Pay Via Bank Completed, which made a dashboard show a live-looking
         // signal for a journey no merchant is told about.
         XCTAssertFalse(analytics.names.contains("Pay Via Bank Completed"))
-        XCTAssertEqual(analytics.names, [AnalyticsEventName.unsupportedFunctionalityUsed])
+        XCTAssertEqual(analytics.names, [])
     }
 
     func testDependencyFailureIsTrackedOnceUnderThePagesOwnName() {
         let analytics = OperationRecordingAnalytics()
         let router = GlomoPayEventRouter(
             listener: nil,
-            devMode: false,
             onComplete: { _ in },
             analytics: analytics,
             errorReporter: NoOpSDKErrorReporter()
@@ -575,7 +566,7 @@ extension ContractCoverageTests {
         router.handle(envelope: ["type": "message", "data": ["type": "dependencies.failed_to_load"]])
 
         XCTAssertEqual(
-            analytics.names.filter { $0 == AnalyticsEventName.checkoutDependenciesFailed }.count,
+            analytics.names.filter { $0 == AnalyticsEventName.sdkCheckoutFailed }.count,
             1
         )
     }
@@ -605,7 +596,6 @@ private final class OperationRecordingAnalytics: AnalyticsTracking {
     var names: [String] = []
     func track(_ event: String, properties: [String: Any?]) { names.append(event) }
     func updateFlowType(_ flowType: String) {}
-    func updateCheckoutURL(_ url: URL) {}
 }
 
 private final class ContractCoverageListener: GlomoPayListener {

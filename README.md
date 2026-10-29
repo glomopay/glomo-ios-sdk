@@ -94,8 +94,8 @@ and no event behind it.
 
 The SDK holds the listener **weakly**: it does not keep a merchant object alive. Retain it for at
 least as long as the checkout. A coordinator or handler that nothing else references will be
-released mid-checkout, and the payment result cannot then be delivered - the SDK reports that as
-`Listener Unavailable` in analytics and captures it to Sentry, but the result is still gone.
+released mid-checkout, and the payment result cannot then be delivered - the SDK captures that to
+Sentry and sends `had_listener: false` on `sdk_checkout_closed`, but the result is still gone.
 
 Callbacks arrive on the main queue. They must not throw or trap: Swift has no catchable exception
 mechanism, so a force-unwrap of nil or an out-of-range index inside a callback traps the host
@@ -117,10 +117,11 @@ reports the step it reached. Two budgets sit behind the spinner:
 - a 15-second render timeout, which is **advisory**: it reports `onConnectionError` with
   `shouldAutoClose` false and shows a retry surface, because the page may be seconds away;
 - an outer watchdog, derived from the order-API timeout plus the render budget plus a margin
-  rather than hard-coded, which reports `Checkout Open Timeout` with `last_step` and `reason`.
+  rather than hard-coded, which reports `sdk_checkout_failed` with `error_code: open_timeout` and
+  `last_step`.
 
-If the page arrives after a timeout was reported, `Checkout Opened After Timeout` is emitted. The
-difference between the two counts is not a failure rate.
+If the page arrives after a timeout was reported, it still sends `sdk_page_viewed` with
+`page_name: checkout`, so a late open shows as both events in one journey.
 
 `autoCloseOnConnectionError` is set on `GlomoPayConfig`. It defaults to true and applies only to
 failures marked as closing: an advisory timeout, a cancelled navigation and an unmapped WebKit
@@ -222,9 +223,9 @@ must include these usage descriptions in their app `Info.plist`:
 ```
 
 The cost of this position is recorded so it is not rediscovered as a bug: there is no picker
-telemetry (the page's own file-input click still reports `File Upload Requested` with its accept
-types), no control over accept-type behaviour, and no SDK-side image downscale on iOS. Typical
-iPhone captures are expected to stay under the bank's 10 MB upload limit. If production uploads
+telemetry (the hosted page tracks its own file-input click), no control over accept-type
+behaviour, and no SDK-side image downscale on iOS. Typical iPhone captures are expected to stay
+under the bank's 10 MB upload limit. If production uploads
 start failing on file size, the fix is a downscale on the upload path, not a replacement picker.
 
 ## Analytics and diagnostics configuration

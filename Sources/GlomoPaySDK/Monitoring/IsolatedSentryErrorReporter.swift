@@ -23,7 +23,7 @@ final class IsolatedSentryErrorReporter: SDKErrorReporting, @unchecked Sendable 
     private var breadcrumbs: [[String: Any]] = []
 
     /// `orderID` is the checkout's order (or subscription) id, the same value analytics sends as
-    /// `order_id`. It is sent as the `order_id` tag because it is the key that joins a Sentry
+    /// `resource_id`. It is sent as the `order_id` tag because it is the key that joins a Sentry
     /// event to backend logs.
     init(
         client: SentryEnvelopeClient,
@@ -49,8 +49,8 @@ final class IsolatedSentryErrorReporter: SDKErrorReporting, @unchecked Sendable 
         var breadcrumb: [String: Any] = [
             "timestamp": SentryEnvelope.timestamp(Date()),
             "level": "info",
-            "category": AnalyticsSanitizer.text(category, limit: 80),
-            "message": AnalyticsSanitizer.text(message, limit: 200),
+            "category": SentryScrubber.text(category, limit: 80),
+            "message": SentryScrubber.text(message, limit: 200),
         ]
         let safeData = safeContext(data)
         if !safeData.isEmpty { breadcrumb["data"] = safeData }
@@ -88,7 +88,7 @@ final class IsolatedSentryErrorReporter: SDKErrorReporting, @unchecked Sendable 
         breadcrumbs: [[String: Any]],
         capturedAt: Date
     ) -> [String: Any] {
-        let safeOperation = AnalyticsSanitizer.text(operation, limit: 80)
+        let safeOperation = SentryScrubber.text(operation, limit: 80)
         var tags = [
             "sdk_source": "glomo-ios-sdk",
             "operation": safeOperation,
@@ -115,7 +115,7 @@ final class IsolatedSentryErrorReporter: SDKErrorReporting, @unchecked Sendable 
     }
 
     private func safeContext(_ context: [String: Any?]) -> [String: Any] {
-        AnalyticsSanitizer.properties(context).filter { Self.allowedContextKeys.contains($0.key) }
+        SentryScrubber.properties(context).filter { Self.allowedContextKeys.contains($0.key) }
     }
 }
 

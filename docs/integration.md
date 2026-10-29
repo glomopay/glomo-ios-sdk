@@ -21,16 +21,22 @@ unchanged.
 The implementation sends the shared native SDK event contract directly to
 `https://api.mixpanel.com/track?ip=1` using an ephemeral `URLSession`:
 
-- `session_id` is a lowercase UUID generated once per checkout invocation. The same value is
-  sent as `journey_id` and `$device_id`, and appended to the checkout URL as `journeyId`.
+- Events follow Glomo's RFC-4 catalogue, shared with the other native SDKs and the web SDK:
+  `sdk_loaded`, `sdk_page_viewed`, `sdk_api_backend`, `sdk_action_submitted`,
+  `sdk_action_failed`, `sdk_cta_clicked`, `sdk_control_changed`, `sdk_checkout_failed` and
+  `sdk_checkout_closed`. Keys are snake_case and values come from fixed lists.
+- `journey_id` is a lowercase UUID generated once per checkout invocation. The same value is
+  sent as `$device_id` and appended to the checkout URL as `journeyId`.
 - `distinct_id` is `$device:<journey_id>`: the Mixpanel identity is anonymous and new for each
   checkout open, and the SDK never calls identify. Events still carry order-linked identifiers
-  (`order_id`, `subscription_id`, `public_key`, `payment_id`), so the privacy manifest declares
-  this analytics data as linked to the user.
-- `sdk_source`, `platform`, and `surface` are `glomo-ios-sdk`, `ios`, and `ios-sdk`.
-- `order_id` is the order ID, or the subscription ID for subscription checkouts, which also
-  keep the same value in `subscription_id`.
-- `sdk_loaded` is sent once per checkout invocation with `integration` set to `ios_sdk`.
+  (`resource_id`, `public_key`), so the privacy manifest declares this analytics data as linked
+  to the user.
+- `integration` is `ios_sdk` and `platform` is `ios` on every event.
+- `resource_id` is the order ID, or the subscription ID for subscription checkouts. `journey` is
+  `standard`, `lrs` or `subscription` once the order type is known. `key_mode` is `live` for a
+  `live_` key and `test` for a `test_` or `mock_` key, and is omitted otherwise.
+- `sdk_loaded`, `sdk_page_viewed` with `page_name: checkout` and `sdk_checkout_closed` are sent
+  once per checkout invocation, and `sdk_checkout_failed` once per `error_code`.
 - `$insert_id` is a fresh lowercase UUID on every event, so Mixpanel never deduplicates two
   distinct events.
 - Requests are asynchronous, have a 10-second timeout, and do not retry.
@@ -42,32 +48,28 @@ The implementation sends the shared native SDK event contract directly to
 
 ## Privacy boundary
 
-Analytics is allow-by-contract and sanitized before transport. Email addresses, long bare
-numeric identifiers, PAN, passport, and voter ID patterns are redacted, including inside
-free-text string values. Glomo identifiers (`order_id`, `public_key`, `session_id` and the
-like), values that are wholly a UUID, and device/host-app metadata such as the app version and
-build are passed unchanged. Property names
-associated with customer, card, bank-account, and KYC data are dropped. Main checkout URLs
-drop credentials, query, and fragment data when used as navigation properties. Bank redirect
-events are stricter and retain only `https://hostname`; path, port, credentials, query, and
-fragment are removed.
+Analytics is allow-by-contract and masked before transport. A property whose snake_case key has
+a customer-data token (`email`, `phone`, `mobile`, `pan`, `aadhaar`, `name`, `account`, `card`,
+`address`, `dob`, `token`, `otp`, `passport`, `voter`) is masked rather than dropped; fixed-list
+taxonomy keys such as `page_name` are exempt. String values under any key are masked by pattern:
+email as `j•••@domain`, a Luhn-valid card number as `XXXX-XXXX-XXXX-1234`, a tax PAN as
+`XXXXXX234F`, a 10-12 digit number as `••••1234`, and passport or voter IDs as `•••`.
+Identifiers (`resource_id`, `journey_id` and the like), values that are wholly a UUID, and
+device/host-app metadata such as the app version and build pass unchanged. Every string,
+identifiers included, is capped at 1,000 characters, and arrays and objects are dropped. URLs
+are sent only as an origin (`url_origin`); bank redirect origins keep only `https://hostname`.
 
 The SDK does not collect customer names, email addresses, phone numbers, PAN/card data, bank
 account numbers, or KYC document contents. The bundled `PrivacyInfo.xcprivacy` declares
-product-interaction analytics, SDK diagnostic data, and device performance data, with tracking
-disabled.
+product-interaction analytics, SDK diagnostic data and coarse location, with tracking disabled.
 
-At checkout invocation, the SDK collects one diagnostic performance snapshot and attaches it
-only to the existing `SDK Initialized` Mixpanel event. The snapshot can include battery level
-and state, Low Power Mode, thermal state, physical memory, process memory, jetsam headroom, and
-active processor count. Collection is fail-open, does not delay checkout, does not require a
-merchant permission or entitlement, and is not used for user tracking. Unknown values are sent
-as null. The SDK does not continuously sample device performance.
+The SDK sends no device performance or device-posture data to analytics.
 
-The same initialization event includes one `NWPathMonitor` reading for Wi-Fi and cellular
-interface state. The monitor is cancelled after its first satisfied reading or after a bounded
-250 ms timeout. Unsatisfied paths and timeouts preserve both values as null, and no continuous
-network monitoring occurs.
+At checkout invocation, the SDK takes one `NWPathMonitor` reading for Wi-Fi and cellular
+interface state and attaches it to later events as `$wifi_enabled` and `$cellular_enabled`. The
+monitor is cancelled after its first satisfied reading or after a bounded 250 ms timeout.
+Unsatisfied paths and timeouts leave both values unset, and no continuous network monitoring
+occurs.
 
 ## Isolated Sentry client
 
@@ -83,10 +85,11 @@ required: left unset, Sentry treats the Cocoa platform as `auto` and stores the 
 The privacy manifest declares coarse location for analytics and app functionality.
 
 Each event is tagged `order_id` with the checkout's order id (or subscription id), the same value
-analytics sends, so it can be joined to backend logs. When events are discarded (rate limited,
-over the in-flight bound, a 5xx or a transport failure), the next event that goes out carries
-the count as `extra.dropped_since_last_send`, so a quiet project can be told apart from one whose
-reports are being thrown away. The HTTP body is gzip-compressed (`Content-Encoding: gzip`).
+analytics sends as `resource_id`, so it can be joined to backend logs. When events are discarded
+(rate limited, over the in-flight bound, a 5xx or a transport failure), the next event that goes
+out carries the count as `extra.dropped_since_last_send`, so a quiet project can be told apart
+from one whose reports are being thrown away. The HTTP body is gzip-compressed
+(`Content-Encoding: gzip`).
 
 Events identify as `glomo-ios-sdk/<SDK version>`, with `release` `glomo-ios-sdk@<SDK version>`
 and `environment` `glomo-ios-sdk`, so Sentry releases track the SDK version, not the host app's.

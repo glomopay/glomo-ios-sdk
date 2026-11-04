@@ -196,3 +196,39 @@ final class ColorSchemeInjectionTests: XCTestCase {
         XCTAssertTrue(GlomoPayInjectionScripts.colorScheme(.dark).contains("catch (e) {}"))
     }
 }
+
+/// The merchant's `dark_mode_enabled` flag, as read off the order response.
+///
+/// Plain dictionary in, Bool out, so the rule is covered on the macOS run where the checkout
+/// controller is compiled out. What the controller then does with it is in
+/// `ColorSchemeControllerTests`, on the simulator.
+final class DarkModeFlagTests: XCTestCase {
+    func testItIsOnOnlyForALiteralTrue() {
+        XCTAssertTrue(ConfigManager.darkModeEnabled(["dark_mode_enabled": true]))
+    }
+
+    func testItIsOffForFalse() {
+        XCTAssertFalse(ConfigManager.darkModeEnabled(["dark_mode_enabled": false]))
+    }
+
+    func testItIsOffWhenTheKeyIsAbsent() {
+        // What every response looked like before the field shipped, and what a cached or
+        // proxied older response still looks like.
+        XCTAssertFalse(ConfigManager.darkModeEnabled(["orderType": "lrs"]))
+        XCTAssertFalse(ConfigManager.darkModeEnabled([:]))
+    }
+
+    func testItIsOffForAnythingThatIsNotABool() {
+        // An identity check rather than a truthiness one: each of these is truthy in some
+        // language on this contract, and dark is the only answer that can be visibly wrong.
+        XCTAssertFalse(ConfigManager.darkModeEnabled(["dark_mode_enabled": "true"]))
+        XCTAssertFalse(ConfigManager.darkModeEnabled(["dark_mode_enabled": 1]))
+        XCTAssertFalse(ConfigManager.darkModeEnabled(["dark_mode_enabled": NSNull()]))
+    }
+
+    func testItReadsTheSnakeCaseKeyOnly() {
+        // The payload carries both `order_type` and `orderType`; this field has no camelCase
+        // alias, so a reader guessing one finds nothing and silently stays light.
+        XCTAssertFalse(ConfigManager.darkModeEnabled(["darkModeEnabled": true]))
+    }
+}

@@ -30,6 +30,12 @@ public API changes require a new major release.
 - The allow-list is derived from the base URLs this SDK navigates to, including a custom
   `GlomoPayConfig.server`, so a self-hosted checkout is covered without extra setup.
 
+### Fixed
+
+- A checkout opened with `appColorScheme: .dark` no longer shows a dark screen before a light page renders. The SDK now waits to learn whether dark mode is switched on for your merchant account before colouring anything it draws, and keeps the checkout light until it knows. Nothing changes for an account that has dark mode switched on, or for a host app that asks for `.light`.
+- A WebView told `light` no longer reports `dark` to the page's own `prefers-color-scheme` media query, which could render part of the checkout in the wrong scheme.
+- Checkouts opened with an explicit `orderType`, and subscription checkouts, keep the previous light-only behaviour: those paths do not load the order, so the account setting is not available to them.
+
 ## [1.1.0] - 2026-10-29
 
 ### Added

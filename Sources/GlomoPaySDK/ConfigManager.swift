@@ -84,4 +84,17 @@ public enum ConfigManager {
         if let explicit = orderData["orderType"] as? String, !explicit.isEmpty { return explicit }
         return orderData["lrs"] != nil ? "lrs" : "standard"
     }
+
+    /// Whether the merchant has dark mode switched on, from the order response.
+    ///
+    /// The key is snake_case and has no camelCase alias, unlike `order_type`/`orderType` on the
+    /// same payload. An identity check against `true` rather than a truthiness one: a missing key,
+    /// a null, the string "true" and a number all mean light. Light is the safe answer because the
+    /// page renders light whenever the flag is off, so guessing dark is the only way to be wrong.
+    ///
+    /// Here rather than on the checkout controller so it is reachable from the macOS test run,
+    /// where everything behind `canImport(UIKit)` is compiled out.
+    static func darkModeEnabled(_ orderData: [String: Any]) -> Bool {
+        orderData["dark_mode_enabled"] as? Bool == true
+    }
 }

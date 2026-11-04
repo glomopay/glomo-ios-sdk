@@ -57,7 +57,16 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private var networkSnapshotCollector: IOSNetworkPathSnapshotCollector?
     /// What `config.appColorScheme` currently resolves to. Held so a host appearance change can
     /// be told from a trait change that moved something else - a size class, a rotation.
+    ///
+    /// This is the *request*. It is what the page is told, over the URL parameter and the injected
+    /// setter, and the page decides against the merchant's own settings. What the SDK paints is
+    /// ``presentedColorScheme``, which is not the same thing.
     private var resolvedColorScheme: ResolvedColorScheme = .light
+    /// The merchant's `dark_mode_enabled` flag, from the order response.
+    ///
+    /// False until the fetch answers, and on every path that never fetches. Read with an identity
+    /// check against `true`, so an absent, null or non-boolean value is light rather than a guess.
+    private var darkModeEnabled = false
     /// Reassigned by ``setAppColorScheme(_:)``; the rest of the config never changes.
     private var appColorScheme: GlomoColorScheme
 
@@ -255,6 +264,10 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private func configureLoadingView() {
         loadingView = UIView()
         loadingView.translatesAutoresizingMaskIntoConstraints = false
+        // Pinned rather than left to inherit: `.systemBackground` follows the device, so without
+        // this a dark phone gets a dark loading view in front of a page that will render light.
+        // Light until the merchant flag says otherwise; `applyPresentedColorScheme` re-pins it.
+        loadingView.overrideUserInterfaceStyle = presentedColorScheme == .dark ? .dark : .light
         loadingView.backgroundColor = .systemBackground
 
         let indicator = UIActivityIndicatorView(style: .large)
@@ -456,6 +469,8 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         do {
             let response = try await apiClient.fetchOrderResponse(config.orderId!)
             let type = ConfigManager.detectOrderType(response.order)
+            darkModeEnabled = ConfigManager.darkModeEnabled(response.order)
+            applyPresentedColorScheme()
             flowTypeState.resolve(type)
             analytics.updateFlowType(type)
             errorReporter.updateFlowType(type)
@@ -919,7 +934,34 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     /// `prefers-color-scheme: light` in its own CSS whenever the host app is light, and render
     /// half of each.
     private func applyInterfaceStyle(to webView: WKWebView) {
-        webView.overrideUserInterfaceStyle = resolvedColorScheme == .dark ? .dark : .light
+        webView.overrideUserInterfaceStyle = presentedColorScheme == .dark ? .dark : .light
+    }
+
+    /// The scheme the SDK may actually paint, as opposed to the one it asks the page for.
+    ///
+    /// The page only goes dark for a merchant whose `dark_mode_enabled` flag is on; with it off it
+    /// renders light whatever the URL said. Painting our surfaces from the request alone therefore
+    /// flashes dark before a light page for every merchant who has not switched dark mode on, and
+    /// leaves `prefers-color-scheme` inside the WebView disagreeing with the scheme on the URL -
+    /// which is the exact split-rendering this file pins the interface style to prevent.
+    ///
+    /// False-by-default is load-bearing: before the fetch answers, and on every path that never
+    /// fetches, this is light, which is what the surfaces already were.
+    private var presentedColorScheme: ResolvedColorScheme {
+        darkModeEnabled ? resolvedColorScheme : .light
+    }
+
+    /// Re-pins every surface the SDK paints before the page does.
+    ///
+    /// Called once the merchant flag lands, which is the only moment a surface can legitimately
+    /// turn dark - everything is light until then. The root view is deliberately left alone: an
+    /// override there reaches the flow WebView, which must keep inheriting the host, and the
+    /// controller's own traits are what `hostIsDark` reads.
+    private func applyPresentedColorScheme() {
+        let style: UIUserInterfaceStyle = presentedColorScheme == .dark ? .dark : .light
+        loadingView?.overrideUserInterfaceStyle = style
+        if let webView { applyInterfaceStyle(to: webView) }
+        if let carouselWebView { applyInterfaceStyle(to: carouselWebView) }
     }
 
     /// Watches the host's appearance for as long as the checkout is up.

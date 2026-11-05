@@ -199,36 +199,55 @@ final class ColorSchemeInjectionTests: XCTestCase {
 
 /// The merchant's `dark_mode_enabled` flag, as read off the order response.
 ///
+/// Every dictionary here is decoded from JSON bytes rather than written as a Swift literal,
+/// because the two do not behave the same. `JSONSerialization` boxes JSON booleans and JSON
+/// numbers alike into `NSNumber`, and bridging back hands `1` to Swift as `true`; a Swift `Int`
+/// literal never bridges, so a hand-built dictionary passes an identity check the wire does not.
+///
 /// Plain dictionary in, Bool out, so the rule is covered on the macOS run where the checkout
 /// controller is compiled out. What the controller then does with it is in
 /// `ColorSchemeControllerTests`, on the simulator.
 final class DarkModeFlagTests: XCTestCase {
-    func testItIsOnOnlyForALiteralTrue() {
-        XCTAssertTrue(ConfigManager.darkModeEnabled(["dark_mode_enabled": true]))
+    /// The order response as it actually reaches `ConfigManager`.
+    private func order(_ json: String) throws -> [String: Any] {
+        let object = try JSONSerialization.jsonObject(with: Data(json.utf8))
+        return try XCTUnwrap(object as? [String: Any])
     }
 
-    func testItIsOffForFalse() {
-        XCTAssertFalse(ConfigManager.darkModeEnabled(["dark_mode_enabled": false]))
+    func testItIsOnOnlyForALiteralTrue() throws {
+        XCTAssertTrue(ConfigManager.darkModeEnabled(try order(#"{"dark_mode_enabled": true}"#)))
     }
 
-    func testItIsOffWhenTheKeyIsAbsent() {
+    func testItIsOffForFalse() throws {
+        XCTAssertFalse(ConfigManager.darkModeEnabled(try order(#"{"dark_mode_enabled": false}"#)))
+    }
+
+    func testItIsOffWhenTheKeyIsAbsent() throws {
         // What every response looked like before the field shipped, and what a cached or
         // proxied older response still looks like.
-        XCTAssertFalse(ConfigManager.darkModeEnabled(["orderType": "lrs"]))
-        XCTAssertFalse(ConfigManager.darkModeEnabled([:]))
+        XCTAssertFalse(ConfigManager.darkModeEnabled(try order(#"{"orderType": "lrs"}"#)))
+        XCTAssertFalse(ConfigManager.darkModeEnabled(try order("{}")))
     }
 
-    func testItIsOffForAnythingThatIsNotABool() {
+    func testItIsOffForANumber() throws {
+        // The case a Swift literal cannot reach. `1` and `1.0` both arrive as `NSNumber` and
+        // both bridge to `true` through `as? Bool`, so a truthiness read turns a numeric 1 into
+        // a dark checkout for a merchant who never switched dark mode on.
+        XCTAssertFalse(ConfigManager.darkModeEnabled(try order(#"{"dark_mode_enabled": 1}"#)))
+        XCTAssertFalse(ConfigManager.darkModeEnabled(try order(#"{"dark_mode_enabled": 1.0}"#)))
+        XCTAssertFalse(ConfigManager.darkModeEnabled(try order(#"{"dark_mode_enabled": 0}"#)))
+    }
+
+    func testItIsOffForAnythingThatIsNotABool() throws {
         // An identity check rather than a truthiness one: each of these is truthy in some
         // language on this contract, and dark is the only answer that can be visibly wrong.
-        XCTAssertFalse(ConfigManager.darkModeEnabled(["dark_mode_enabled": "true"]))
-        XCTAssertFalse(ConfigManager.darkModeEnabled(["dark_mode_enabled": 1]))
-        XCTAssertFalse(ConfigManager.darkModeEnabled(["dark_mode_enabled": NSNull()]))
+        XCTAssertFalse(ConfigManager.darkModeEnabled(try order(#"{"dark_mode_enabled": "true"}"#)))
+        XCTAssertFalse(ConfigManager.darkModeEnabled(try order(#"{"dark_mode_enabled": null}"#)))
     }
 
-    func testItReadsTheSnakeCaseKeyOnly() {
+    func testItReadsTheSnakeCaseKeyOnly() throws {
         // The payload carries both `order_type` and `orderType`; this field has no camelCase
         // alias, so a reader guessing one finds nothing and silently stays light.
-        XCTAssertFalse(ConfigManager.darkModeEnabled(["darkModeEnabled": true]))
+        XCTAssertFalse(ConfigManager.darkModeEnabled(try order(#"{"darkModeEnabled": true}"#)))
     }
 }

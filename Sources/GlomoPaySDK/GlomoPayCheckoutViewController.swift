@@ -953,10 +953,13 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
 
     /// Re-pins every surface the SDK paints before the page does.
     ///
-    /// Called once the merchant flag lands, which is the only moment a surface can legitimately
-    /// turn dark - everything is light until then. The root view is deliberately left alone: an
-    /// override there reaches the flow WebView, which must keep inheriting the host, and the
-    /// controller's own traits are what `hostIsDark` reads.
+    /// Two callers, and both are needed: the merchant flag landing, which is the first moment a
+    /// surface may legitimately turn dark, and ``applyColorScheme(_:)``, which is the only thing
+    /// that runs when the host changes appearance mid-checkout.
+    ///
+    /// The root view is deliberately left alone: an override there reaches the flow WebView,
+    /// which must keep inheriting the host, and the controller's own traits are what `hostIsDark`
+    /// reads.
     private func applyPresentedColorScheme() {
         let style: UIUserInterfaceStyle = presentedColorScheme == .dark ? .dark : .light
         loadingView?.overrideUserInterfaceStyle = style
@@ -1003,9 +1006,12 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     ///
     /// The script is gated per surface on the page actually being ours, exactly as the
     /// page-finished push is - a WebView that has navigated off our origin is not ours to
-    /// restyle. The interface style is pinned regardless: that is a property of the WebView
-    /// rather than of the page on it, and it has to be right for the Glomo page the surface
-    /// returns to.
+    /// restyle. The appearance is re-pinned regardless, through ``applyPresentedColorScheme()``:
+    /// that is a property of the surface rather than of the page on it, and it has to be right
+    /// for the Glomo page the surface returns to. Going through that method rather than pinning
+    /// the two WebViews inline is what keeps ``loadingView`` in step - it is shown again on every
+    /// main-frame navigation, on Retry and on process-termination recovery, so a stale style
+    /// there outlives the change that caused it.
     ///
     /// The flow WebView is excluded entirely - it holds the bank's page on the bank's origin.
     private func applyColorScheme(_ resolved: ResolvedColorScheme) {
@@ -1013,10 +1019,11 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         let previous = resolvedColorScheme
         resolvedColorScheme = resolved
 
+        applyPresentedColorScheme()
+
         let script = GlomoPayInjectionScripts.colorScheme(resolved)
         for (target, expected) in [(webView, currentURL), (carouselWebView, carouselURL)] {
             guard let target else { continue }
-            applyInterfaceStyle(to: target)
             guard mayPushColorScheme(loaded: target.url, expected: expected) else { continue }
             scriptEvaluator(target, script)
         }

@@ -56,12 +56,23 @@ final class ColorSchemeControllerTests: XCTestCase {
         return controller
     }
 
-    /// Drives the real `auto` path, so the merchant flag arrives the way it does in production:
-    /// off the order response, after the WebView already exists and has been pinned light.
+    /// Drives the real checkout lifecycle, appearance transition included, and waits until the
+    /// first load has been built.
+    ///
+    /// With an `orderBody` it takes the `auto` path, so the merchant flag arrives the way it does
+    /// in production: off the order response, after the WebView already exists and has been
+    /// pinned light. With `orderBody` nil it takes the explicit-order-type path, which skips the
+    /// fetch entirely and never learns the flag.
+    ///
+    /// `loadViewIfNeeded()` alone is not enough for either: `startCheckout` runs from
+    /// `viewDidAppear`, so without the transition a test asserts the construction-time pin and
+    /// would still pass if the path under test went on to turn the surface dark.
     private func makeFetchingController(
         appColorScheme: GlomoColorScheme = .auto,
         hostStyle: UIUserInterfaceStyle = .light,
-        orderBody: String
+        insideParentStyled parentStyle: UIUserInterfaceStyle? = nil,
+        orderType: String = "auto",
+        orderBody: String? = nil
     ) async throws -> GlomoPayCheckoutViewController {
         let config = GlomoPayConfig(
             publicKey: "test_public_key",
@@ -70,16 +81,29 @@ final class ColorSchemeControllerTests: XCTestCase {
         )
         let controller = GlomoPayCheckoutViewController(
             config: config,
-            orderType: "auto",
+            orderType: orderType,
             listener: nil,
-            apiClient: GlomoPayApiClient(
-                publicKey: "test_public_key",
-                baseURL: URL(string: "https://api.example.com")!,
-                client: OrderBodyHTTPClient(body: orderBody)
-            ),
+            apiClient: orderBody.map { body in
+                GlomoPayApiClient(
+                    publicKey: "test_public_key",
+                    baseURL: URL(string: "https://api.example.com")!,
+                    client: OrderBodyHTTPClient(body: body)
+                )
+            },
             telemetryRuntime: .shared
         )
         controller.overrideUserInterfaceStyle = hostStyle
+        // Parented before the view loads, for the same reason as in `makeController`: otherwise
+        // the trait collection `viewDidLoad` reads has no ancestor to inherit from and the test
+        // proves nothing about which of the two won.
+        if let parentStyle {
+            let parent = UIViewController()
+            parent.overrideUserInterfaceStyle = parentStyle
+            retainedParents.append(parent)
+            parent.addChild(controller)
+            parent.view.addSubview(controller.view)
+            controller.didMove(toParent: parent)
+        }
         controller.loadViewIfNeeded()
         controller.beginAppearanceTransition(true, animated: false)
         controller.endAppearanceTransition()
@@ -151,14 +175,17 @@ final class ColorSchemeControllerTests: XCTestCase {
         XCTAssertEqual(main.overrideUserInterfaceStyle, .light)
     }
 
-    func testAPathThatNeverFetchesStaysLight() throws {
+    func testAPathThatNeverFetchesStaysLight() async throws {
         // An explicit order type skips the order fetch entirely, so the flag is never known.
         // Light is the correct answer and this pins it: these merchants keep the flash until
         // the fetch is reworked, which is deliberately not this change.
-        let controller = makeController(appColorScheme: .dark, hostStyle: .dark)
+        let controller = try await makeFetchingController(
+            appColorScheme: .dark, hostStyle: .dark, orderType: "standard"
+        )
         let main = try XCTUnwrap(webViews(in: controller.view).first)
 
         XCTAssertEqual(main.overrideUserInterfaceStyle, .light)
+        XCTAssertEqual(controller.loadingView.overrideUserInterfaceStyle, .light)
     }
 
     func testTheLoadingViewFollowsTheFlagToo() async throws {
@@ -169,6 +196,36 @@ final class ColorSchemeControllerTests: XCTestCase {
 
         let off = try await makeFetchingController(appColorScheme: .dark, orderBody: darkModeOffOrder)
         XCTAssertEqual(off.loadingView.overrideUserInterfaceStyle, .light)
+    }
+
+    func testALiveChangeRepaintsEverySurfaceOnTheFlag() async throws {
+        // `applyColorScheme(_:)` is the only thing that runs when the host changes appearance
+        // mid-checkout. The loading view is the one that bites: it comes back on every main-frame
+        // navigation, on Retry and on process-termination recovery, so a style left behind here
+        // reappears over the new page rather than being corrected by the next load.
+        let controller = try await makeFetchingController(
+            appColorScheme: .light, orderBody: darkModeOnOrder
+        )
+        let main = try XCTUnwrap(webViews(in: controller.view).first)
+        XCTAssertEqual(main.overrideUserInterfaceStyle, .light)
+
+        controller.setAppColorScheme(.dark)
+
+        XCTAssertEqual(main.overrideUserInterfaceStyle, .dark)
+        XCTAssertEqual(controller.loadingView.overrideUserInterfaceStyle, .dark)
+    }
+
+    func testALiveChangeLeavesAFlagOffCheckoutLight() async throws {
+        // The request still reaches the page; what the SDK paints is the separate decision.
+        let controller = try await makeFetchingController(
+            appColorScheme: .light, orderBody: darkModeOffOrder
+        )
+
+        controller.setAppColorScheme(.dark)
+
+        let main = try XCTUnwrap(webViews(in: controller.view).first)
+        XCTAssertEqual(main.overrideUserInterfaceStyle, .light)
+        XCTAssertEqual(controller.loadingView.overrideUserInterfaceStyle, .light)
     }
 
     func testAChangeReachesThePageWithoutReloadingIt() throws {
@@ -228,7 +285,10 @@ final class ColorSchemeControllerTests: XCTestCase {
         // On the flag, so that light here is the host being followed rather than the flag
         // forcing light and the assertion proving nothing.
         let controller = try await makeFetchingController(
-            appColorScheme: .auto, hostStyle: .light, orderBody: darkModeOnOrder
+            appColorScheme: .auto,
+            hostStyle: .light,
+            insideParentStyled: .dark,
+            orderBody: darkModeOnOrder
         )
 
         let main = try XCTUnwrap(webViews(in: controller.view).first)

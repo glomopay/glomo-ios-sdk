@@ -30,6 +30,10 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private var didTerminate = false
     private var didTrackSDKLoaded = false
     private var progressObservation: NSKeyValueObservation?
+    /// Origins allowed to send a privileged bridge message, and the only ones the main WebView
+    /// may navigate to. Resolved once from the config the checkout opened with.
+    private lazy var trustedOrigins: Set<String> = TrustedOrigin.pageOrigins(for: config)
+
     private var bridgeHandler: GlomoPayJavaScriptBridge?
     private var flowBridgeHandler: GlomoPayJavaScriptBridge?
     private var carouselWebView: WKWebView?
@@ -146,7 +150,8 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             onWindowClose: { [weak self] in self?.closeFlowFromPage() },
             onBridgeReady: { [weak self] in self?.markBridgeReady() },
             analytics: analytics,
-            errorReporter: errorReporter
+            errorReporter: errorReporter,
+            trustedOrigins: trustedOrigins
         )
         configureWebView()
         configureLoadingView()
@@ -214,8 +219,8 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
         ))
-        bridgeHandler = GlomoPayJavaScriptBridge { [weak self] body in
-            DispatchQueue.main.async { self?.eventRouter.handle(body: body) }
+        bridgeHandler = GlomoPayJavaScriptBridge { [weak self] body, sender in
+            DispatchQueue.main.async { self?.eventRouter.handle(body: body, sender: sender) }
         }
         if let bridgeHandler {
             userContentController.add(bridgeHandler, name: "GlomoPayBridge")
@@ -665,6 +670,26 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             decisionHandler(FlowNavigationPolicy.allows(navigationAction.request.url) ? .allow : .cancel)
             return
         }
+        if webView === self.webView {
+            // The main WebView hosts GlomoPayBridge, so any document it lands on can speak to the
+            // SDK. It only ever loads GlomoPay's own checkout page, which is worth enforcing
+            // rather than stating. `about:` and `blob:` are WebKit's own intermediate documents,
+            // not a navigation anyone chose.
+            let url = navigationAction.request.url
+            let scheme = FlowNavigationPolicy.scheme(of: url)
+            if scheme == "about" || scheme == "blob" {
+                decisionHandler(.allow)
+                return
+            }
+            guard let origin = TrustedOrigin.origin(of: url), trustedOrigins.contains(origin) else {
+                analytics.trackActionFailed(.navigation(.externalHost, scheme: scheme, webViewType: .main))
+                GlomoPayLogger.log("Blocked main WebView navigation off a GlomoPay origin")
+                decisionHandler(.cancel)
+                return
+            }
+            decisionHandler(.allow)
+            return
+        }
         if webView === flowWebView {
             // The allowlist belongs here and not on the main WebView, which only ever loads
             // GlomoPay's own checkout document. WKWebView never hands an unknown scheme to the
@@ -760,8 +785,8 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
         ))
-        let flowBridge = GlomoPayJavaScriptBridge { [weak self] body in
-            DispatchQueue.main.async { self?.eventRouter.handle(body: body) }
+        let flowBridge = GlomoPayJavaScriptBridge { [weak self] body, sender in
+            DispatchQueue.main.async { self?.eventRouter.handle(body: body, sender: sender) }
         }
         flowBridgeHandler = flowBridge
         userContentController.add(flowBridge, name: "GlomoPayFlowBridge")
@@ -976,7 +1001,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
         ))
-        let bridge = GlomoPayJavaScriptBridge { [weak self] body in
+        let bridge = GlomoPayJavaScriptBridge { [weak self] body, _ in
             DispatchQueue.main.async { self?.handleCarouselMessage(body) }
         }
         carouselBridgeHandler = bridge

@@ -6,6 +6,22 @@ This project follows [Semantic Versioning](https://semver.org/).
 Starting with 1.0.0, the public API follows Semantic Versioning. Breaking
 public API changes require a new major release.
 
+## Unreleased
+
+### Changed
+
+- **Payment and page-lifecycle bridge messages are now accepted only from Glomo checkout pages,
+  and only from a page's main frame.** The bank and 3-D Secure pages shown in the redirect overlay
+  can no longer report a payment result or put a checkout on the error screen. Bank-driven
+  navigation is unaffected: a bank page closing the overlay after a 3-D Secure challenge works
+  exactly as before. No integration change is required, and the callbacks your app receives from a
+  normal payment are unchanged.
+- **The main checkout WebView is now restricted to Glomo origins.** It only ever loaded a Glomo
+  page; that is now enforced rather than assumed. The bank redirect overlay is deliberately not
+  restricted by host, since the bank decides where it goes next.
+- The allow-list is derived from the base URLs this SDK navigates to, including a custom
+  `GlomoPayConfig.server`, so a self-hosted checkout is covered without extra setup.
+
 ## [1.1.0] - 2026-10-29
 
 ### Added

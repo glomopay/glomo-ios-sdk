@@ -124,8 +124,8 @@ final class CarouselBridgeDeliveryTests: XCTestCase {
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
         ))
-        controller.add(GlomoPayJavaScriptBridge { box.append($0) }, name: "GlomoCarouselBridge")
-        controller.add(GlomoPayJavaScriptBridge { _ in done.fulfill() }, name: "TestDone")
+        controller.add(GlomoPayJavaScriptBridge { body, _ in box.append(body) }, name: "GlomoCarouselBridge")
+        controller.add(GlomoPayJavaScriptBridge { _, _ in done.fulfill() }, name: "TestDone")
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.userContentController = controller

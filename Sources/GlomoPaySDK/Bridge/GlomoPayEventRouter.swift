@@ -8,7 +8,22 @@ final class GlomoPayEventRouter {
     private let onBridgeReady: () -> Void
     private let analytics: AnalyticsTracking
     private let errorReporter: SDKErrorReporting
+    private let trustedOrigins: Set<String>
     private var terminalDelivered = false
+
+    /// The types a bank or 3-D Secure page must not be able to send.
+    ///
+    /// `message` carries every payment and lifecycle event, including `payment.success`.
+    /// `dependencies.failed_to_load` is the checkout page reporting its own failure, and from
+    /// anyone else it is a way to put a live checkout on the error screen.
+    ///
+    /// `window.open`, `window.close` and `bridge.ready` are absent on purpose.
+    /// `GlomoPayInjectionScripts.flow` replaces `window.open`/`window.close`/`location` on the
+    /// bank's own document, so those arrive from bank origins by design — a bank calling
+    /// `window.close()` is how the overlay dismisses after a challenge, and gating it would strand
+    /// the user on a finished page. They are also unprivileged: `window.open` is validated and
+    /// only navigates the overlay the user is already in.
+    private static let privilegedTypes: Set<String> = ["message", "dependencies.failed_to_load"]
 
     init(
         listener: GlomoPayListener?,
@@ -17,7 +32,8 @@ final class GlomoPayEventRouter {
         onWindowClose: @escaping () -> Void = {},
         onBridgeReady: @escaping () -> Void = {},
         analytics: AnalyticsTracking,
-        errorReporter: SDKErrorReporting
+        errorReporter: SDKErrorReporting,
+        trustedOrigins: Set<String> = []
     ) {
         self.listener = listener
         self.onComplete = onComplete
@@ -26,17 +42,51 @@ final class GlomoPayEventRouter {
         self.onBridgeReady = onBridgeReady
         self.analytics = analytics
         self.errorReporter = errorReporter
+        self.trustedOrigins = trustedOrigins
     }
 
-    func handle(body: Any) {
+    /// The bridge boundary: everything a WebView can reach arrives here.
+    ///
+    /// `sender` is WebKit's own attribution of the frame that posted. It defaults to a main-frame
+    /// send with no origin, which is never trusted, so a caller that forgets it drops every
+    /// privileged type rather than waving it through.
+    func handle(body: Any, sender: BridgeMessageSender = BridgeMessageSender(origin: nil, isMainFrame: true)) {
         do {
             let envelope = try dictionary(from: body)
+            if let type = envelope["type"] as? String, Self.privilegedTypes.contains(type) {
+                guard sender.isMainFrame, let origin = sender.origin, trustedOrigins.contains(origin) else {
+                    reportUntrustedMessage(type: type, sender: sender)
+                    return
+                }
+            }
             handle(envelope: envelope)
         } catch {
             emitError(message: error.localizedDescription)
         }
     }
 
+    /// A privileged message from a frame that is not one of ours. Reported, never raised on
+    /// `onSdkError`: before the page's first event that raise is the terminal error screen, so it
+    /// would hand any bank page a way to end a checkout it can no longer speak for.
+    private func reportUntrustedMessage(type: String, sender: BridgeMessageSender) {
+        errorReporter.capture(
+            operation: "bridge_message_untrusted_origin",
+            error: RouterError("Bridge message from an untrusted frame"),
+            context: [
+                "message_type": type,
+                "is_main_frame": sender.isMainFrame,
+                // The origin, never the URL: a bank redirect carries whatever the acquirer put in
+                // its query string.
+                "origin": sender.origin ?? "unknown",
+            ]
+        )
+    }
+
+    /// Dispatches an already-decoded envelope.
+    ///
+    /// Deliberately ungated: `handle(body:sender:)` is the bridge boundary and the only thing a
+    /// WebView can reach, so the frame check belongs there and this stays the SDK's own
+    /// dispatcher. Anything that starts feeding this from a WebView has to bring the check along.
     func handle(envelope: [String: Any]) {
         guard let type = envelope["type"] as? String, !type.isEmpty else {
             emitError(message: "Bridge message is missing a type")

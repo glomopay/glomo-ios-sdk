@@ -1,0 +1,31 @@
+{
+  "cases": [
+    { "name": "email in free text", "key": "error_detail", "value": "contact jane.doe@example.com", "expected": "contact j•••@example.com" },
+    { "name": "Luhn-valid card", "key": "error_detail", "value": "4111 1111 1111 1111", "expected": "XXXX-XXXX-XXXX-1111" },
+    { "name": "card-length digits that fail Luhn", "key": "error_detail", "value": "1234567890123456", "expected": "1234567890123456" },
+    { "name": "tax PAN keeps the last 4", "key": "error_detail", "value": "ABCDE1234F", "expected": "XXXXXX234F" },
+    { "name": "phone", "key": "error_detail", "value": "9876543210", "expected": "••••3210" },
+    { "name": "Luhn-valid 10 digits is phone-like, not a card", "key": "error_detail", "value": "9876543217", "expected": "••••3217" },
+    { "name": "Aadhaar-like with spaces", "key": "error_detail", "value": "1234 5678 9012", "expected": "••••9012" },
+    { "name": "passport", "key": "error_detail", "value": "N1234567", "expected": "•••" },
+    { "name": "voter id", "key": "error_detail", "value": "ABC1234567", "expected": "•••" },
+    { "name": "6-digit code is not a catch-all match", "key": "error_detail", "value": "code 123456", "expected": "code 123456" },
+    { "name": "name token masks the value", "key": "customer_name", "value": "Jane Doe", "expected": "•••" },
+    { "name": "account token keeps the last 4", "key": "account_number", "value": "000123456789", "expected": "••••6789" },
+    { "name": "otp token", "key": "otp", "value": "482913", "expected": "•••" },
+    { "name": "identity token on an id key", "key": "email_id", "value": "j@example.com", "expected": "•••" },
+    { "name": "whole tokens only: panel", "key": "panel_id", "value": "panel_1", "expected": "panel_1" },
+    { "name": "whole tokens only: company_type", "key": "company_type", "value": "llp", "expected": "llp" },
+    { "name": "whole tokens only: discard_reason", "key": "discard_reason", "value": "expired", "expected": "expired" },
+    { "name": "taxonomy key is exempt", "key": "page_name", "value": "bank_redirect", "expected": "bank_redirect" },
+    { "name": "reserved key is exempt", "key": "$app_name", "value": "Merchant App", "expected": "Merchant App" },
+    { "name": "date-style build number is not phone-masked", "key": "$app_build_number", "value": "2026102801", "expected": "2026102801" },
+    { "name": "public_key is value-masked", "key": "public_key", "value": "live_pk-9876543210", "expected": "live_pk-••••3210" },
+    { "name": "booleans skip the key rule", "key": "has_email", "value": true, "expected": true },
+    { "name": "numbers are never pattern-matched", "key": "amount", "value": 9876543210, "expected": 9876543210 },
+    { "name": "identifiers pass through", "key": "journey_id", "value": "0f8e6c1a-2b3d-4e5f-8a9b-123456789012", "expected": "0f8e6c1a-2b3d-4e5f-8a9b-123456789012" },
+    { "name": "null is kept", "key": "had_listener", "value": null, "expected": null },
+    { "name": "arrays are dropped", "key": "accept_types", "value": ["image/*"], "absent": true },
+    { "name": "objects are dropped", "key": "payload", "value": { "orderId": "order_1" }, "absent": true }
+  ]
+}

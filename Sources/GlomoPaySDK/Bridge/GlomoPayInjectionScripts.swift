@@ -99,6 +99,36 @@ enum GlomoPayInjectionScripts {
         "window.__glomoDevMode__ = \(devMode ? "true" : "false");"
     }
 
+    /// Hands the resolved colour scheme to the page.
+    ///
+    /// Parks the value on `window.__glomoColorScheme__` *before* calling the setter, every time.
+    /// The page defines the setter when its app mounts, which can be later than the document
+    /// finishing, so a scheme pushed into that window would be lost with nothing to retry it. The
+    /// parked value is what the page seeds from on mount. Before, not after: a setter that is
+    /// already present runs synchronously and would read a global not yet written.
+    ///
+    /// Nothing reads the global today - that half is the checkout page's and lands with it, which
+    /// is what lets the two sides ship independently.
+    ///
+    /// Guards the *function*, not `window`: in a WebView `window` always exists and it is the
+    /// setter that is absent - during load, or on a merchant deploy that predates it - so
+    /// `window?.glomoSetColorScheme(...)` would throw where this skips.
+    ///
+    /// Deliberately not idempotent, unlike the injections around it. This one is re-run on every
+    /// page load and on every scheme change.
+    static func colorScheme(_ resolved: ResolvedColorScheme) -> String {
+        """
+        (function() {
+          try {
+            window.__glomoColorScheme__ = '\(resolved.wireName)';
+            if (typeof window.glomoSetColorScheme === 'function') {
+              window.glomoSetColorScheme('\(resolved.wireName)');
+            }
+          } catch (e) {}
+        })();
+        """
+    }
+
     static let credentialedRequestsFix = """
     (function() {
       if (window.__glomoIOSCredentialedRequestsFix__) return;
@@ -256,7 +286,13 @@ enum GlomoPayInjectionScripts {
             }
           })();
 
+          // Same-document only. This listener forwards to a privileged channel, so without the
+          // source check a third-party iframe on the page - a card partner, an s2s or 3DS frame -
+          // could `top.postMessage({type: 'payment.success'})` and have it relayed as if the page
+          // itself had said it. The native frame check cannot see that: by then the message is
+          // coming from our own main frame.
           window.addEventListener('message', function(event) {
+            if (event.source !== window || event.origin !== location.origin) return;
             if (event.data) bridge(JSON.stringify({type: 'message', data: event.data}));
           });
           window.addEventListener('error', function(event) {

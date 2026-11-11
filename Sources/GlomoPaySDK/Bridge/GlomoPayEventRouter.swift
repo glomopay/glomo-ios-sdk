@@ -2,51 +2,91 @@ import Foundation
 
 final class GlomoPayEventRouter {
     private weak var listener: GlomoPayListener?
-    private let devMode: Bool
     private let onComplete: (GlomoPayResult) -> Void
     private let onWindowOpen: (URL) -> Void
     private let onWindowClose: () -> Void
     private let onBridgeReady: () -> Void
     private let analytics: AnalyticsTracking
     private let errorReporter: SDKErrorReporting
+    private let trustedOrigins: Set<String>
     private var terminalDelivered = false
+
+    /// The types a bank or 3-D Secure page must not be able to send.
+    ///
+    /// `message` carries every payment and lifecycle event, including `payment.success`.
+    /// `dependencies.failed_to_load` is the checkout page reporting its own failure, and from
+    /// anyone else it is a way to put a live checkout on the error screen.
+    ///
+    /// `window.open`, `window.close` and `bridge.ready` are absent on purpose.
+    /// `GlomoPayInjectionScripts.flow` replaces `window.open`/`window.close`/`location` on the
+    /// bank's own document, so those arrive from bank origins by design — a bank calling
+    /// `window.close()` is how the overlay dismisses after a challenge, and gating it would strand
+    /// the user on a finished page. They are also unprivileged: `window.open` is validated and
+    /// only navigates the overlay the user is already in.
+    private static let privilegedTypes: Set<String> = ["message", "dependencies.failed_to_load"]
 
     init(
         listener: GlomoPayListener?,
-        devMode: Bool,
         onComplete: @escaping (GlomoPayResult) -> Void,
         onWindowOpen: @escaping (URL) -> Void = { _ in },
         onWindowClose: @escaping () -> Void = {},
         onBridgeReady: @escaping () -> Void = {},
         analytics: AnalyticsTracking,
-        errorReporter: SDKErrorReporting
+        errorReporter: SDKErrorReporting,
+        trustedOrigins: Set<String> = []
     ) {
         self.listener = listener
-        self.devMode = devMode
         self.onComplete = onComplete
         self.onWindowOpen = onWindowOpen
         self.onWindowClose = onWindowClose
         self.onBridgeReady = onBridgeReady
         self.analytics = analytics
         self.errorReporter = errorReporter
+        self.trustedOrigins = trustedOrigins
     }
 
-    func handle(body: Any) {
+    /// The bridge boundary: everything a WebView can reach arrives here.
+    ///
+    /// `sender` is WebKit's own attribution of the frame that posted. It defaults to a main-frame
+    /// send with no origin, which is never trusted, so a caller that forgets it drops every
+    /// privileged type rather than waving it through.
+    func handle(body: Any, sender: BridgeMessageSender = BridgeMessageSender(origin: nil, isMainFrame: true)) {
         do {
             let envelope = try dictionary(from: body)
+            if let type = envelope["type"] as? String, Self.privilegedTypes.contains(type) {
+                guard sender.isMainFrame, TrustedOrigin.isTrusted(sender.origin, in: trustedOrigins) else {
+                    reportUntrustedMessage(type: type, sender: sender)
+                    return
+                }
+            }
             handle(envelope: envelope)
         } catch {
-            let schema = bridgeBodySchema(body)
-            analytics.track(AnalyticsEventName.invalidMessageReceived, properties: [
-                "webview_type": "main",
-                "data_type": schema.dataType,
-                "top_level_keys": schema.topLevelKeys.joined(separator: ","),
-                "byte_length": schema.byteLength,
-            ])
             emitError(message: error.localizedDescription)
         }
     }
 
+    /// A privileged message from a frame that is not one of ours. Reported, never raised on
+    /// `onSdkError`: before the page's first event that raise is the terminal error screen, so it
+    /// would hand any bank page a way to end a checkout it can no longer speak for.
+    private func reportUntrustedMessage(type: String, sender: BridgeMessageSender) {
+        errorReporter.capture(
+            operation: "bridge_message_untrusted_origin",
+            error: RouterError("Bridge message from an untrusted frame"),
+            context: [
+                "message_type": type,
+                "is_main_frame": sender.isMainFrame,
+                // The origin, never the URL: a bank redirect carries whatever the acquirer put in
+                // its query string.
+                "origin": sender.origin ?? "unknown",
+            ]
+        )
+    }
+
+    /// Dispatches an already-decoded envelope.
+    ///
+    /// Deliberately ungated: `handle(body:sender:)` is the bridge boundary and the only thing a
+    /// WebView can reach, so the frame check belongs there and this stays the SDK's own
+    /// dispatcher. Anything that starts feeding this from a WebView has to bring the check along.
     func handle(envelope: [String: Any]) {
         guard let type = envelope["type"] as? String, !type.isEmpty else {
             emitError(message: "Bridge message is missing a type")
@@ -58,13 +98,6 @@ final class GlomoPayEventRouter {
             // "The page is alive" is known here, by which case received the message - no host
             // event channel and no unprefixed-name heuristic needed to derive it.
             onBridgeReady()
-        case "console":
-            if devMode {
-                analytics.track(AnalyticsEventName.consoleLogCaptured, properties: [
-                    "level": envelope["level"] as? String,
-                    "message": AnalyticsSanitizer.text(envelope["message"] as? String ?? "", limit: 1_000),
-                ])
-            }
         case "window.open":
             // URL(string:) is a parse, not a check: it happily returns a valid URL for
             // javascript:, data: and file:. Validate before anything can navigate.
@@ -73,10 +106,7 @@ final class GlomoPayEventRouter {
                   let url = URL(string: rawURL) else {
                 let scheme = (envelope["url"] as? String)
                     .flatMap { URLComponents(string: $0)?.scheme?.lowercased() } ?? "none"
-                analytics.track(AnalyticsEventName.nonHTTPNavigationAttempted, properties: [
-                    "scheme": scheme,
-                    "webview_type": "bridge",
-                ])
+                analytics.trackActionFailed(.navigation(.invalidWindowOpenURL, scheme: scheme, webViewType: .main))
                 // A page sending an unusable window.open URL is a contract break, not noise:
                 // Flutter drops it silently and that is the part not worth copying.
                 errorReporter.capture(
@@ -87,10 +117,7 @@ final class GlomoPayEventRouter {
                 emitError(message: "window.open has an invalid URL")
                 return
             }
-            analytics.track(AnalyticsEventName.redirectOpened, properties: [
-                "source": "main",
-                "url": AnalyticsSanitizer.bankRedirectURL(url),
-            ])
+            analytics.trackPageViewed(.bankRedirect, urlOrigin: AnalyticsSanitizer.bankRedirectURL(url))
             onWindowOpen(url)
         case "window.close":
             onWindowClose()
@@ -100,28 +127,14 @@ final class GlomoPayEventRouter {
             }
         case "dependencies.failed_to_load":
             let message = envelope["message"] as? String ?? "Checkout dependencies failed to load"
-            analytics.track(AnalyticsEventName.checkoutDependenciesFailed, properties: ["error_message": message])
+            analytics.trackCheckoutFailed(.dependenciesFailedToLoad)
             errorReporter.capture(
                 operation: "checkout_dependencies",
                 error: RouterError(message),
                 context: ["source": "bridge"]
             )
-        case "file.input":
-            // Reported, not retained. The accept types were stored for the document picker to
-            // filter with, which is the client-side filter that has been removed: `accept` selects
-            // which picker opens and never restricts what may be chosen, because the bank
-            // re-validates every upload. The stored value was also read a run loop turn before it
-            // was written, so the first upload of a session filtered on nothing - that race is
-            // gone with the property rather than fixed.
-            let acceptTypes = (envelope["accept"] as? String ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            analytics.track(AnalyticsEventName.fileUploadRequested, properties: [
-                "accept_types": acceptTypes,
-            ])
         default:
-            analytics.track(AnalyticsEventName.unsupportedFunctionalityUsed, properties: [
-                "name": type,
-            ])
+            break
         }
     }
 
@@ -139,8 +152,8 @@ final class GlomoPayEventRouter {
         switch eventName {
         case "payment.success", "success":
             let payload = GlomoPayPayload(json: payloadData)
-            analytics.track(AnalyticsEventName.paymentSuccess, properties: ["payment_id": payload.paymentId])
             guard Validator.isValidPaymentPayload(payload) else {
+                analytics.trackActionFailed(.paymentPayload(.dropped, pageEvent: .paymentSuccess))
                 emitError(message: "Invalid payment success payload")
                 return
             }
@@ -149,7 +162,6 @@ final class GlomoPayEventRouter {
         // signature, so there is nothing a host's backend can verify. Reporting it through
         // onPaymentSuccess told merchants money had moved when it had not.
         case "payment.bank_transfer_submitted":
-            analytics.track(AnalyticsEventName.bankTransferSubmitted)
             let journey = GlomoPayUserJourneyPayload(
                 journeyType: .bankTransferSubmitted,
                 json: payloadData
@@ -160,7 +172,7 @@ final class GlomoPayEventRouter {
                 errorReporter.capture(
                     operation: "thin_bank_transfer_payload",
                     error: RouterError("Bank transfer payload carried no orderId"),
-                    context: ["keys": AnalyticsSanitizer.schemaKeys(Array(payloadData.keys)).joined(separator: ",")]
+                    context: ["keys": SentryScrubber.schemaKeys(Array(payloadData.keys)).joined(separator: ",")]
                 )
                 return
             }
@@ -173,48 +185,33 @@ final class GlomoPayEventRouter {
         // silent misroute the next time that schema moves.
         case "payment.failure", "payment.failed", "failed", "payment.error":
             let payload = GlomoPayPayload(json: payloadData)
-            analytics.track(AnalyticsEventName.paymentFailure, properties: [
-                "payment_id": payload.paymentId,
-                "reason": payloadData["reason"] ?? payloadData["message"],
-            ])
             if payload.orderId.isEmpty {
                 errorReporter.capture(
                     operation: "thin_payment_failure_payload",
                     error: RouterError("Payment failure payload carried no orderId"),
-                    context: ["keys": AnalyticsSanitizer.schemaKeys(Array(payloadData.keys)).joined(separator: ",")]
+                    context: ["keys": SentryScrubber.schemaKeys(Array(payloadData.keys)).joined(separator: ",")]
                 )
             }
             // Delivered either way: the payload travels as-is in rawResponse.
             complete(.failure(message: "Payment failed", code: nil), payload: payload)
         case "payment.pending", "pending":
-            let payload = GlomoPayPayload(json: payloadData)
-            analytics.track(AnalyticsEventName.paymentPending, properties: ["payment_id": payload.paymentId])
             break
-        case "payment.cancelled", "cancelled":
-            analytics.track(AnalyticsEventName.paymentCancelled)
-            complete(.cancelled, termination: .userDismiss)
-        case "checkout.closed":
-            analytics.track(AnalyticsEventName.paymentTerminated, properties: [
-                "termination_source": "checkout_closed",
-            ])
+        case "payment.cancelled", "cancelled", "checkout.closed":
             complete(.cancelled, termination: .userDismiss)
         // No `glomoCheckoutJourneyTerminate` case. Pay-via-bank is sunset and unsupported on iOS:
         // the event used to be tracked as Pay Via Bank Completed with no callback, no payload type
         // and no enum member behind it, which made a dashboard show a live-looking signal for a
         // journey no merchant is told about. If the page still emits it, it now falls through to
-        // the default branch as Unsupported Functionality Used, which is the correct outcome.
+        // the default branch and is ignored, which is the correct outcome.
         case "lrs.has_education_steps":
             // The page's contract is { type: 'lrs.has_education_steps', value: true }, sent only
             // when there is content; anything else is not a signal.
             if EducationCarouselContract.isContentSignal(payloadData) {
-                analytics.track(AnalyticsEventName.educationStepsShown, properties: [
-                    "source": payloadData["source"],
-                ])
+                analytics.trackPageViewed(.educationCarousel)
             }
         case "lrs.education_steps_failed", "lrs.education_steps_failed_to_show":
-            analytics.track(AnalyticsEventName.educationStepsFailed, properties: [
-                "reason": payloadData["reason"] ?? "render_failed",
-            ])
+            let failure = AnalyticsEducationCarouselError(pageReason: payloadData["reason"])
+            analytics.trackActionFailed(.educationCarousel(failure))
         // No second `dependencies.failed_to_load` handler. The envelope-level case already tracks
         // it; handling it here too tracked the same failure twice for one message. The page reports
         // it under its own name and the SDK keeps it that way - it used to be re-emitted as
@@ -222,14 +219,7 @@ final class GlomoPayEventRouter {
         // event the page owns look like one the SDK raised. No dialog is drawn over the page's own
         // error screen and no console output is interpreted; that half was already correct.
         default:
-            // Page events the SDK does not route used to be forwarded verbatim to the host's
-            // onEvent. With that channel gone, the signal lives in analytics instead of nowhere.
-            if let eventName {
-                analytics.track(AnalyticsEventName.unsupportedFunctionalityUsed, properties: [
-                    "name": eventName,
-                    "source": "page_message",
-                ])
-            }
+            break
         }
     }
 
@@ -258,7 +248,6 @@ final class GlomoPayEventRouter {
     /// rather than dropping a payment outcome in silence.
     private func deliverToListener(_ deliver: (GlomoPayListener) -> Void) {
         guard let listener else {
-            analytics.track(AnalyticsEventName.listenerUnavailable, properties: ["source": "bridge"])
             errorReporter.capture(
                 operation: "listener_unavailable",
                 error: RouterError("Listener was released before a terminal result was delivered"),
@@ -271,10 +260,6 @@ final class GlomoPayEventRouter {
 
     private func emitError(message: String) {
         let error = SdkError(type: .unknown, message: message)
-        analytics.track(AnalyticsEventName.sdkError, properties: [
-            "error_count": 1,
-            "errors": SDKErrorAnalyticsSerializer.serialize([error]),
-        ])
         errorReporter.capture(operation: "bridge_message", error: error, context: ["error_type": "unknown"])
         deliverToListener { $0.onSdkError([error]) }
     }
@@ -287,35 +272,6 @@ final class GlomoPayEventRouter {
             return dictionary
         }
         throw NSError(domain: "GlomoPayBridge", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unable to parse WebView bridge message"])
-    }
-
-    private func bridgeBodySchema(_ body: Any) -> (dataType: String, topLevelKeys: [String], byteLength: Int) {
-        let keys: [String]
-        if let dictionary = body as? [String: Any] {
-            keys = Array(dictionary.keys)
-        } else if let string = body as? String,
-                  let data = string.data(using: .utf8),
-                  let dictionary = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            keys = Array(dictionary.keys)
-        } else {
-            keys = []
-        }
-
-        return (
-            dataType: String(describing: type(of: body)),
-            topLevelKeys: AnalyticsSanitizer.schemaKeys(keys),
-            byteLength: bridgeBodyByteLength(body)
-        )
-    }
-
-    private func bridgeBodyByteLength(_ body: Any) -> Int {
-        if let data = body as? Data { return data.count }
-        if let string = body as? String { return string.lengthOfBytes(using: .utf8) }
-        if JSONSerialization.isValidJSONObject(body),
-           let data = try? JSONSerialization.data(withJSONObject: body) {
-            return data.count
-        }
-        return 0
     }
 }
 

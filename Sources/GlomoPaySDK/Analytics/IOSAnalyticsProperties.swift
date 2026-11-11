@@ -109,7 +109,6 @@ enum IOSAnalyticsProperties {
         let bounds = screen.nativeBounds
         let model = hardwareModel()
         return [
-            "device_os_version": UIDevice.current.systemVersion,
             "$model": model,
             "$device": UIDevice.current.model,
             "$os": "iOS",

@@ -2,11 +2,11 @@
 
 Native Swift implementation of the GlomoPay checkout SDK. The public contract is intentionally aligned with the Flutter and Kotlin SDKs.
 
-Current release: `1.0.0`
+Current release: `1.1.0`
 
 ## Installation with Swift Package Manager
 
-Add the Git repository URL in Xcode and select the `v1.0.0` release tag:
+Add the Git repository URL in Xcode and select the `v1.1.0` release tag:
 
 ```text
 https://github.com/glomopay/glomo-ios-sdk.git
@@ -94,8 +94,8 @@ and no event behind it.
 
 The SDK holds the listener **weakly**: it does not keep a merchant object alive. Retain it for at
 least as long as the checkout. A coordinator or handler that nothing else references will be
-released mid-checkout, and the payment result cannot then be delivered - the SDK reports that as
-`Listener Unavailable` in analytics and captures it to Sentry, but the result is still gone.
+released mid-checkout, and the payment result cannot then be delivered - the SDK captures that to
+Sentry and sends `had_listener: false` on `sdk_checkout_closed`, but the result is still gone.
 
 Callbacks arrive on the main queue. They must not throw or trap: Swift has no catchable exception
 mechanism, so a force-unwrap of nil or an out-of-range index inside a callback traps the host
@@ -117,14 +117,64 @@ reports the step it reached. Two budgets sit behind the spinner:
 - a 15-second render timeout, which is **advisory**: it reports `onConnectionError` with
   `shouldAutoClose` false and shows a retry surface, because the page may be seconds away;
 - an outer watchdog, derived from the order-API timeout plus the render budget plus a margin
-  rather than hard-coded, which reports `Checkout Open Timeout` with `last_step` and `reason`.
+  rather than hard-coded, which reports `sdk_checkout_failed` with `error_code: open_timeout` and
+  `last_step`.
 
-If the page arrives after a timeout was reported, `Checkout Opened After Timeout` is emitted. The
-difference between the two counts is not a failure rate.
+If the page arrives after a timeout was reported, it still sends `sdk_page_viewed` with
+`page_name: checkout`, so a late open shows as both events in one journey.
 
 `autoCloseOnConnectionError` is set on `GlomoPayConfig`. It defaults to true and applies only to
 failures marked as closing: an advisory timeout, a cancelled navigation and an unmapped WebKit
 failure all show the retry surface instead.
+
+### Dark mode
+
+`GlomoPayConfig.appColorScheme` tells the Glomo checkout page which scheme to present. It defaults
+to `.auto`.
+
+```swift
+let config = GlomoPayConfig(
+    publicKey: "test_public_key",
+    orderId: "order_example",
+    appColorScheme: .auto // .auto | .light | .dark
+)
+```
+
+**It requests a scheme, it does not force one.** The page decides, against your merchant dashboard
+settings. Setting `.dark` does not guarantee a dark checkout.
+
+**What `.auto` resolves to here.** The checkout's own trait collection, so an app that sets
+`overrideUserInterfaceStyle` gets what it set rather than what the device is on. What `.auto`
+derives from is a per-platform decision and differs across the Glomo SDKs; only `.light` and
+`.dark` mean the same thing everywhere.
+
+**Changing it mid-checkout is supported**, through the handle:
+
+```swift
+let handle = GlomoPaySDK.shared.startCheckout(from: self, config: config, listener: self)
+// later, without dismissing and re-presenting
+handle.setAppColorScheme(.dark)
+```
+
+The page is told through the bridge rather than by reloading it, so a payment in flight survives
+the change. Do not dismiss and re-present the checkout to change the scheme. A host appearance
+change reaches an open checkout on its own while the scheme is `.auto`; nothing is needed from the
+host for that.
+
+**`WKWebView` has no algorithmic darkening to switch off**, so there is no iOS counterpart to the
+Android setting. The iOS-specific concern is the opposite one: `WKWebView` reports
+`prefers-color-scheme` from its trait collection, which inherits the host app. The checkout and
+carousel WebViews therefore have their `overrideUserInterfaceStyle` pinned to the scheme the
+checkout resolved, so a page told `dark` cannot still match `prefers-color-scheme: light` in its
+own CSS and render half of each.
+
+The bank and 3DS WebView is deliberately left alone. The SDK sends it no scheme - it is the bank's
+page, not ours - and pinning its appearance would let a merchant on `.dark` darken it even where
+the merchant's own dark-mode setting is off.
+
+**Three names, one concept.** The property is `appColorScheme`, the URL parameter the page reads is
+`colorScheme`, and the page hook the SDK calls is `window.glomoSetColorScheme`. The wire names were
+not renamed along with the property.
 
 ### Session isolation
 
@@ -173,9 +223,9 @@ must include these usage descriptions in their app `Info.plist`:
 ```
 
 The cost of this position is recorded so it is not rediscovered as a bug: there is no picker
-telemetry (the page's own file-input click still reports `File Upload Requested` with its accept
-types), no control over accept-type behaviour, and no SDK-side image downscale on iOS. Typical
-iPhone captures are expected to stay under the bank's 10 MB upload limit. If production uploads
+telemetry (the hosted page tracks its own file-input click), no control over accept-type
+behaviour, and no SDK-side image downscale on iOS. Typical iPhone captures are expected to stay
+under the bank's 10 MB upload limit. If production uploads
 start failing on file size, the fix is a downscale on the upload path, not a replacement picker.
 
 ## Analytics and diagnostics configuration
@@ -208,7 +258,7 @@ field in `Package.swift`. The SDK's own version string lives in `GlomoPaySDKBuil
 (`Sources/GlomoPaySDK/Analytics/AnalyticsTracker.swift`) and is what Mixpanel and Sentry
 report; it is not derived from the tag, so it must be updated by hand in the same commit.
 Keep `GlomoPaySDKBuild.version`, `CHANGELOG.md`, and the Git release tag in step. For
-version `1.0.0`:
+version `1.1.0`:
 
 There is no separate publish step. Swift Package Manager resolves the package directly from
 this repository, so the tag on `main` is the release. Everything a merchant compiles must
@@ -235,8 +285,8 @@ token or symbol-upload credential in this file.
 After the release pull request is merged, tag the merge commit on `main`:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 Tags are only ever created on `main`, never on a release branch.

@@ -1,0 +1,148 @@
+import Foundation
+
+enum SentryScrubber {
+    private static let identifierKeys: Set<String> = [
+        "session_id",
+        "journey_id",
+        "$insert_id",
+        "distinct_id",
+        "$device_id",
+        "order_id",
+        "subscription_id",
+        "public_key",
+        "sdk_version",
+        "timestamp",
+    ]
+    /// Device, host-app and payment metadata whose formats the SDK does not control - a host
+    /// app's version can legitimately be `1.4.0-20261001` - and which cannot carry customer data.
+    /// These keep exactly the treatment they had before free-text redaction reached strings
+    /// (whole-value checks, then the length cap), so redaction cannot rewrite them.
+    private static let metadataKeys: Set<String> = [
+        "$app_version_string", "$app_build_number", "$app_namespace", "$app_name",
+        "$model", "$device", "$os", "$os_version", "device_os_version", "$manufacturer", "$brand",
+        "$device_type", "$locale", "$lib_version", "mp_lib", "payment_id",
+    ]
+    private static let blockedKey = makeExpression(
+        pattern: "email|phone|mobile|customer_name|card|pan|account|aadhaar|passport|voter|kyc",
+        options: [.caseInsensitive]
+    )
+    private static let structuredSensitiveValuePatterns = [
+        "^[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}$",
+        "^(?:\\d[\\s-]*){6,}$",
+        "^[A-Z]{5}[0-9]{4}[A-Z]$",
+        "^[A-Z][0-9]{7}$",
+        "^[A-Z]{3}[0-9]{7}$",
+    ].compactMap { makeExpression(pattern: $0, options: [.caseInsensitive]) }
+    private static let uuidValue = makeExpression(
+        pattern: "^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$",
+        options: [.caseInsensitive]
+    )
+    private static let freeTextPatterns = [
+        "[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}",
+        "(?<![A-Za-z0-9_])(?:\\d[\\s-]*){6,}(?![A-Za-z0-9_])",
+        "(?<![A-Za-z0-9_])[A-Z]{5}[0-9]{4}[A-Z](?![A-Za-z0-9_])",
+        "(?<![A-Za-z0-9_])[A-Z][0-9]{7}(?![A-Za-z0-9_])",
+        "(?<![A-Za-z0-9_])[A-Z]{3}[0-9]{7}(?![A-Za-z0-9_])",
+    ].compactMap { makeExpression(pattern: $0, options: [.caseInsensitive]) }
+
+    static func properties(_ input: [String: Any?]) -> [String: Any] {
+        input.reduce(into: [String: Any]()) { output, item in
+            guard !matches(blockedKey, item.key) else { return }
+            guard let value = item.value else {
+                output[item.key] = NSNull()
+                return
+            }
+            if identifierKeys.contains(item.key) {
+                if let safe = sanitizeIdentifier(value) { output[item.key] = safe }
+                return
+            }
+            if let string = value as? String,
+               structuredSensitiveValuePatterns.contains(where: { matches($0, string) }) {
+                return
+            }
+            if metadataKeys.contains(item.key), let string = value as? String {
+                output[item.key] = String(string.prefix(1_000))
+                return
+            }
+            if let safe = sanitize(value) { output[item.key] = safe }
+        }
+    }
+
+    static func text(_ value: String, limit: Int) -> String {
+        String(redact(value).prefix(limit))
+    }
+
+    static func schemaKeys(_ keys: [String]) -> [String] {
+        keys.filter { !matches(blockedKey, $0) }.sorted()
+    }
+
+    private static func sanitize(_ value: Any) -> Any? {
+        switch value {
+        case let value as NSNumber where isBooleanNumber(value): return value.boolValue
+        case let value as Int: return value
+        case let value as Int64: return value
+        case let value as Double: return value
+        case let value as Float: return value
+        case let value as NSNumber: return sanitizeNumber(value)
+        case let value as Bool: return value
+        // Free-text strings get the same redaction as every other value. Identifier fields
+        // (`identifierKeys`) and metadata (`metadataKeys`) never reach this branch, so the
+        // order_id join key and host-app version strings are untouched. A
+        // value that is wholly a UUID is an opaque id that cannot carry PII, and the digit pattern
+        // would otherwise rewrite part of it (`4545-9013` reads as a 6+ digit run).
+        case let value as String:
+            if matches(uuidValue, value) { return value }
+            return text(value, limit: 1_000)
+        default: return text(String(describing: value), limit: 1_000)
+        }
+    }
+
+    private static func sanitizeIdentifier(_ value: Any) -> Any? {
+        switch value {
+        case let value as String: return value
+        case let value as NSNumber where isBooleanNumber(value): return value.boolValue
+        case let value as Int: return value
+        case let value as Int64: return value
+        case let value as Double: return value
+        case let value as Float: return value
+        case let value as NSNumber: return sanitizeNumber(value)
+        case let value as Bool: return value
+        default: return nil
+        }
+    }
+
+    private static func sanitizeNumber(_ value: NSNumber) -> Any {
+        if CFNumberIsFloatType(value) {
+            return value.doubleValue
+        }
+        return value.int64Value
+    }
+
+    private static func isBooleanNumber(_ value: NSNumber) -> Bool {
+        CFGetTypeID(value) == CFBooleanGetTypeID()
+    }
+
+    private static func redact(_ value: String) -> String {
+        freeTextPatterns.reduce(value) { current, pattern in
+            let range = NSRange(current.startIndex..., in: current)
+            return pattern.stringByReplacingMatches(in: current, range: range, withTemplate: "[REDACTED]")
+        }
+    }
+
+    private static func makeExpression(
+        pattern: String,
+        options: NSRegularExpression.Options = []
+    ) -> NSRegularExpression? {
+        do {
+            return try NSRegularExpression(pattern: pattern, options: options)
+        } catch {
+            GlomoPayLogger.error("Sentry scrubber pattern could not be compiled", error: error)
+            return try? NSRegularExpression(pattern: "(?!)")
+        }
+    }
+
+    private static func matches(_ expression: NSRegularExpression?, _ value: String) -> Bool {
+        guard let expression else { return false }
+        return expression.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)) != nil
+    }
+}

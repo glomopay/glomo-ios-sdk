@@ -29,8 +29,8 @@ public final class GlomoPaySDK {
     /// The SDK holds `listener` weakly: it does not keep a merchant object alive. Retain the
     /// listener for at least as long as the checkout, or its callbacks cannot be delivered - a
     /// coordinator or handler that nothing else references will be released mid-checkout and the
-    /// result will be lost. A dropped listener is reported as `Listener Unavailable` in analytics
-    /// and captured to Sentry rather than failing silently, but the result is still gone.
+    /// result will be lost. A dropped listener is captured to Sentry and sent as `had_listener: false`
+    /// on the analytics close rather than failing silently, but the result is still gone.
     ///
     /// Callbacks are delivered on the main queue. They must not throw or trap: Swift has no
     /// catchable exception mechanism, so a force-unwrap of nil or an out-of-range index inside a
@@ -89,6 +89,19 @@ public final class GlomoPayCheckoutHandle {
     public func close() {
         closeRequested = true
         checkout?.closeCheckout()
+    }
+
+    /// Changes the colour scheme of a checkout that is already open.
+    ///
+    /// The page is told through the bridge, not by reloading it, so a payment in flight survives
+    /// the change. Do not dismiss and re-present the checkout to change the scheme.
+    ///
+    /// A request, not a switch: the page decides, against the merchant's dashboard settings. A
+    /// call made before the checkout has been presented, or after it has finished, is dropped -
+    /// unlike ``close()``, which latches. The URL already carries what the config said, so the
+    /// only thing a latched value could do is fight it.
+    public func setAppColorScheme(_ scheme: GlomoColorScheme) {
+        checkout?.setAppColorScheme(scheme)
     }
 }
 #endif

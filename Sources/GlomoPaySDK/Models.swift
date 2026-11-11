@@ -15,18 +15,26 @@ public struct GlomoPayConfig: Sendable, Equatable {
     /// cancelled navigation are not, and neither reaches this any more.
     public let autoCloseOnConnectionError: Bool
 
+    /// The colour scheme to request from the checkout page. Defaults to ``GlomoColorScheme/auto``.
+    ///
+    /// Changing it during a live checkout goes through `GlomoPayCheckoutHandle.setAppColorScheme`,
+    /// not through a new config - rebuilding the URL would reload the page and lose the payment.
+    public let appColorScheme: GlomoColorScheme
+
     public init(
         publicKey: String,
         orderId: String? = nil,
         subscriptionId: String? = nil,
         server: String? = nil,
-        autoCloseOnConnectionError: Bool = true
+        autoCloseOnConnectionError: Bool = true,
+        appColorScheme: GlomoColorScheme = .auto
     ) {
         self.publicKey = publicKey
         self.orderId = orderId
         self.subscriptionId = subscriptionId
         self.server = server
         self.autoCloseOnConnectionError = autoCloseOnConnectionError
+        self.appColorScheme = appColorScheme
     }
 
     public var checkoutId: String? { orderId ?? subscriptionId }

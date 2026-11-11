@@ -6,6 +6,49 @@ This project follows [Semantic Versioning](https://semver.org/).
 Starting with 1.0.0, the public API follows Semantic Versioning. Breaking
 public API changes require a new major release.
 
+## Unreleased
+
+### Changed
+
+- **Payment and page-lifecycle bridge messages are now accepted only from Glomo checkout pages,
+  and only from a page's main frame.** The bank and 3-D Secure pages shown in the redirect overlay
+  can no longer report a payment result or put a checkout on the error screen. Bank-driven
+  navigation is unaffected: a bank page closing the overlay after a 3-D Secure challenge works
+  exactly as before. No integration change is required, and the callbacks your app receives from a
+  normal payment are unchanged.
+- **The main checkout WebView is now restricted to Glomo origins.** It only ever loaded Glomo
+  pages; that is now enforced rather than assumed, and a top-level navigation anywhere else is
+  blocked and reported. Subframe loads - card entry, 3-D Secure, server-to-server - are
+  unaffected, and the bank redirect overlay is deliberately not restricted by host, since the
+  bank decides where it goes next.
+- The injected `message` relay now forwards only same-document messages. A third-party frame
+  embedded in a Glomo page can no longer have a payment event relayed on its behalf.
+- The trusted-origin rule matches Glomo domains by suffix rather than by an exact host list, so a
+  checkout host that moves or redirects between `glomopay.com` and `glomo.one` keeps working in an
+  SDK version that shipped before the move. Configured origins that are not on a Glomo domain - the
+  education carousel and your own `server` - are trusted exactly as before.
+- The allow-list is derived from the base URLs this SDK navigates to, including a custom
+  `GlomoPayConfig.server`, so a self-hosted checkout is covered without extra setup.
+
+## [1.1.0] - 2026-10-29
+
+### Added
+
+- `GlomoPayConfig.appColorScheme` (`.auto` | `.light` | `.dark`, default `.auto`) provides the Glomo checkout page the preferred colour scheme. It requests rather than forces: the page decides (based on backend configuration), against your merchant dashboard settings.
+  - `.auto` follows the checkout's own trait collection, so an app that sets `overrideUserInterfaceStyle` gets what it set. The parameter is defaulted and goes last, so existing `GlomoPayConfig` call sites compile unchanged.
+- `GlomoPayCheckoutHandle.setAppColorScheme(_:)` changes the scheme of a checkout that is already presented. The page is told through the bridge rather than reloaded, so a payment in flight survives the change. A host appearance change reaches an open checkout on its own while the scheme is `.auto`.
+- `GlomoColorScheme` enum.
+
+### Changed
+
+- Improved SDK diagnostics and observability revamp to better assist merchants.
+- The checkout and carousel WebViews now have their `overrideUserInterfaceStyle` pinned to the
+  scheme the checkout resolved. `WKWebView` reports `prefers-color-scheme` from its trait
+  collection, which inherits the host app, so without this a page told `dark` would still match
+  `prefers-color-scheme: light` in its own CSS whenever the host app was light. The bank and 3DS
+  WebView is unchanged: it is sent no scheme and its appearance is not pinned. Nothing to
+  configure.
+
 ## [1.0.0] - 2026-10-01
 
 - Minimum supported iOS is now 16.0 and distribution is Swift Package Manager only. CocoaPods
@@ -101,8 +144,8 @@ public API changes require a new major release.
   A rejected URL is captured rather than dropped silently.
 - `NSURLErrorCancelled` is no longer reported as a connection error. WebKit delivers it routinely
   - superseded provisional navigations, client-side redirects, `stopLoading()` - and with
-  auto-close on it terminated live checkouts for a non-event. `closeFlow()` now clears the
-  navigation delegate before `stopLoading()`.
+    auto-close on it terminated live checkouts for a non-event. `closeFlow()` now clears the
+    navigation delegate before `stopLoading()`.
 - `shouldAutoClose` is decided from the mapped error type instead of the sign of the error code.
   Every `NSURLErrorDomain` code is negative and every `WKErrorDomain` code is positive, so the
   old rule closed on all unmapped iOS errors and exempted genuine WebKit failures.

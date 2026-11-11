@@ -21,6 +21,10 @@ public API changes require a new major release.
   definition. Subframe loads - card entry, 3-D Secure - are unaffected.
 - The injected `message` relay now forwards only same-document messages. A third-party frame
   embedded in a Glomo page can no longer have a payment event relayed on its behalf.
+- The trusted-origin rule matches Glomo domains by suffix rather than by an exact host list, so a
+  checkout host that moves or redirects between `glomopay.com` and `glomo.one` keeps working in an
+  SDK version that shipped before the move. Configured origins that are not on a Glomo domain - the
+  education carousel and your own `server` - are trusted exactly as before.
 - The allow-list is derived from the base URLs this SDK navigates to, including a custom
   `GlomoPayConfig.server`, so a self-hosted checkout is covered without extra setup.
 

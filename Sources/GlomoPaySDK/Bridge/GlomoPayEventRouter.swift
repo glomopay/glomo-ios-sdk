@@ -54,7 +54,7 @@ final class GlomoPayEventRouter {
         do {
             let envelope = try dictionary(from: body)
             if let type = envelope["type"] as? String, Self.privilegedTypes.contains(type) {
-                guard sender.isMainFrame, let origin = sender.origin, trustedOrigins.contains(origin) else {
+                guard sender.isMainFrame, TrustedOrigin.isTrusted(sender.origin, in: trustedOrigins) else {
                     reportUntrustedMessage(type: type, sender: sender)
                     return
                 }

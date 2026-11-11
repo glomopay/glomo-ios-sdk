@@ -153,12 +153,48 @@ final class TrustedOriginTests: XCTestCase {
         XCTAssertTrue(TrustedOrigin.pageOrigins(for: config).contains("https://pay.merchant.example"))
     }
 
+    func testAGlomoDomainTheConfigNeverNamedIsTrusted() {
+        // The whole point: an installed SDK cannot be updated the day checkout moves domain.
+        let config = GlomoPayConfig(publicKey: "live_abc", orderId: "order_1")
+        let origins = TrustedOrigin.pageOrigins(for: config)
+
+        XCTAssertTrue(TrustedOrigin.isTrusted("https://checkout.glomo.one", in: origins))
+        XCTAssertTrue(TrustedOrigin.isTrusted("https://lrs-checkout.glomo.one", in: origins))
+        XCTAssertFalse(origins.contains("https://checkout.glomo.one"))
+    }
+
+    func testTheSuffixRuleDoesNotAdmitALookalike() {
+        let origins: Set<String> = []
+        XCTAssertFalse(TrustedOrigin.isTrusted("https://glomo.one.attacker.test", in: origins))
+        XCTAssertFalse(TrustedOrigin.isTrusted("https://attackerglomo.one", in: origins))
+        XCTAssertFalse(TrustedOrigin.isTrusted("https://notglomopay.com", in: origins))
+    }
+
+    func testTheSuffixRuleIsHTTPSOnDefaultPortOnly() {
+        let origins: Set<String> = []
+        XCTAssertFalse(TrustedOrigin.isTrusted("http://checkout.glomo.one", in: origins))
+        XCTAssertFalse(TrustedOrigin.isTrusted("https://checkout.glomo.one:8443", in: origins))
+    }
+
+    func testConfiguredOriginsOffAGlomoDomainAreStillTrusted() {
+        let config = GlomoPayConfig(publicKey: "live_abc", orderId: "order_1")
+        let origins = TrustedOrigin.pageOrigins(for: config)
+        let carousel = TrustedOrigin.origin(of: URL(string: ConfigManager.carouselBaseURL))
+
+        // Firebase Hosting, not a Glomo domain - covered only by the configured set.
+        XCTAssertFalse(TrustedOrigin.isGlomoHost("glomopay-utilities.web.app"))
+        XCTAssertTrue(TrustedOrigin.isTrusted(carousel, in: origins))
+    }
+
     func testAHostThatMerelyEndsWithATrustedOneIsNotTrusted() {
         let config = GlomoPayConfig(publicKey: "live_abc", orderId: "order_1")
         let origins = TrustedOrigin.pageOrigins(for: config)
 
         XCTAssertFalse(origins.contains("https://checkout.glomopay.com.attacker.test"))
+        // A subdomain of ours is ours - reachable only by whoever controls our DNS - so the
+        // suffix rule trusts it even though the configured set does not name it.
         XCTAssertFalse(origins.contains("https://attacker-checkout.glomopay.com"))
+        XCTAssertTrue(TrustedOrigin.isTrusted("https://attacker-checkout.glomopay.com", in: origins))
     }
 }
 

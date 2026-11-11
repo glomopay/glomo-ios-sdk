@@ -686,7 +686,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
                 decisionHandler(.allow)
                 return
             }
-            if let origin = TrustedOrigin.origin(of: url), trustedOrigins.contains(origin) {
+            if TrustedOrigin.isTrusted(TrustedOrigin.origin(of: url), in: trustedOrigins) {
                 decisionHandler(.allow)
                 return
             }

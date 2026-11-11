@@ -49,6 +49,38 @@ enum TrustedOrigin {
         return "\(scheme)://\(host):\(port)"
     }
 
+    /// Domains GlomoPay serves checkout from.
+    ///
+    /// A suffix rule rather than a fixed host list, because a shipped SDK cannot be updated when a
+    /// checkout host moves or redirects between these two - an exact list would strand every
+    /// installed version on the old host the day the move happens. The Flutter SDK's
+    /// `CheckoutOriginPolicy` has worked this way since KAN-8742; this is the same rule.
+    static let glomoDomains = ["glomopay.com", "glomo.one"]
+
+    /// Exact host, or a subdomain of one. Never a bare suffix - `attackerglomopay.com` is not ours.
+    static func isGlomoHost(_ host: String) -> Bool {
+        let lower = host.lowercased()
+        return glomoDomains.contains { lower == $0 || lower.hasSuffix(".\($0)") }
+    }
+
+    /// Whether `origin` is one of ours.
+    ///
+    /// Two sources of trust, and the second is what keeps the first from having to be exhaustive:
+    /// - https on a GlomoPay domain, default port only. Survives a domain move.
+    /// - an exact origin the SDK itself navigated to, from `pageOrigins(for:)`. That is what
+    ///   covers the education carousel on Firebase Hosting and a merchant's own
+    ///   `GlomoPayConfig.server`, neither of which is on a GlomoPay domain.
+    static func isTrusted(_ origin: String?, in trusted: Set<String>) -> Bool {
+        guard let origin else { return false }
+        if trusted.contains(origin) { return true }
+        // Default port only: `normalised` keeps an explicit non-default port, so a port here means
+        // the origin is not plain https on the domain and the suffix rule must not cover it.
+        guard origin.hasPrefix("https://") else { return false }
+        let host = String(origin.dropFirst("https://".count))
+        guard !host.contains(":") else { return false }
+        return isGlomoHost(host)
+    }
+
     /// Every origin this SDK serves a page from, for the config in hand.
     ///
     /// Derived from the same base URLs the SDK navigates to rather than written out, so a merchant

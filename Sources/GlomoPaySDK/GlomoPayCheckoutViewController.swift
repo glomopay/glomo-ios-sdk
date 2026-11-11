@@ -690,20 +690,21 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
                 decisionHandler(.allow)
                 return
             }
-            // Reported, not cancelled. The checkout page ends a successful payment by navigating
-            // the main frame to the merchant's own `callbackUrl`, which is off-origin by
-            // definition - cancelling it would break that redirect for every merchant who uses
-            // it. The control that matters is the bridge gate: once this document is not ours,
-            // nothing it posts can decide a payment.
+            // Cancelled and reported. Checkout's only off-origin main-frame
+            // navigation is the merchant `callbackUrl` redirect, and the page reads that from
+            // its own query string - which this SDK never writes, so the redirect cannot be
+            // reached from a WebView the SDK opened. The LRS page's same-window bank redirect is
+            // a fallback for when `window.open` returns nothing; the injected shim always returns
+            // a window object, so the overlay is what gets used. Matches the Android SDK.
             analytics.trackActionFailed(.navigation(.externalHost, scheme: scheme, webViewType: .main))
             errorReporter.capture(
-                operation: "main_webview_left_glomopay_origin",
-                error: CheckoutNavigationError("Main WebView navigated off a GlomoPay origin"),
-                // The origin, never the URL: a callback URL carries payment identifiers.
+                operation: "main_webview_navigation_blocked",
+                error: CheckoutNavigationError("Main WebView navigation off a GlomoPay origin"),
+                // The origin, never the URL: a bank or callback URL carries payment identifiers.
                 context: ["origin": TrustedOrigin.origin(of: url) ?? "unknown"]
             )
-            GlomoPayLogger.log("Main WebView left a GlomoPay origin")
-            decisionHandler(.allow)
+            GlomoPayLogger.log("Blocked main-frame navigation off a GlomoPay origin")
+            decisionHandler(.cancel)
             return
         }
         if webView === flowWebView {

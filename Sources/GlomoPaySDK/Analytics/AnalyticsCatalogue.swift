@@ -102,6 +102,7 @@ enum AnalyticsErrorPageCode: String, CaseIterable {
 enum AnalyticsNavigationError: String, CaseIterable {
     case nonHTTPScheme = "non_http_scheme"
     case invalidWindowOpenURL = "invalid_window_open_url"
+    case externalHost = "external_host"
 }
 
 enum AnalyticsPaymentPayloadError: String, CaseIterable {

@@ -30,6 +30,10 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
     private var didTerminate = false
     private var didTrackSDKLoaded = false
     private var progressObservation: NSKeyValueObservation?
+    /// Origins allowed to send a privileged bridge message, and the only ones the main WebView
+    /// may navigate to. Resolved once from the config the checkout opened with.
+    private lazy var trustedOrigins: Set<String> = TrustedOrigin.pageOrigins(for: config)
+
     private var bridgeHandler: GlomoPayJavaScriptBridge?
     private var flowBridgeHandler: GlomoPayJavaScriptBridge?
     private var carouselWebView: WKWebView?
@@ -146,7 +150,8 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             onWindowClose: { [weak self] in self?.closeFlowFromPage() },
             onBridgeReady: { [weak self] in self?.markBridgeReady() },
             analytics: analytics,
-            errorReporter: errorReporter
+            errorReporter: errorReporter,
+            trustedOrigins: trustedOrigins
         )
         configureWebView()
         configureLoadingView()
@@ -214,8 +219,8 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
         ))
-        bridgeHandler = GlomoPayJavaScriptBridge { [weak self] body in
-            DispatchQueue.main.async { self?.eventRouter.handle(body: body) }
+        bridgeHandler = GlomoPayJavaScriptBridge { [weak self] body, sender in
+            DispatchQueue.main.async { self?.eventRouter.handle(body: body, sender: sender) }
         }
         if let bridgeHandler {
             userContentController.add(bridgeHandler, name: "GlomoPayBridge")
@@ -665,6 +670,43 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             decisionHandler(FlowNavigationPolicy.allows(navigationAction.request.url) ? .allow : .cancel)
             return
         }
+        if webView === self.webView {
+            // Main frame only. `decidePolicyFor` fires for subframe loads too, and the checkout
+            // page embeds third-party frames - card entry, s2s, 3-D Secure - whose hosts are not
+            // ours and must keep loading.
+            guard navigationAction.targetFrame?.isMainFrame == true else {
+                decisionHandler(.allow)
+                return
+            }
+            let url = navigationAction.request.url
+            let scheme = FlowNavigationPolicy.scheme(of: url)
+            // `about:` and `blob:` are WebKit's own intermediate documents, not a navigation
+            // anyone chose.
+            if scheme == "about" || scheme == "blob" {
+                decisionHandler(.allow)
+                return
+            }
+            if TrustedOrigin.isTrusted(TrustedOrigin.origin(of: url), in: trustedOrigins) {
+                decisionHandler(.allow)
+                return
+            }
+            // Cancelled and reported. Checkout's only off-origin main-frame
+            // navigation is the merchant `callbackUrl` redirect, and the page reads that from
+            // its own query string - which this SDK never writes, so the redirect cannot be
+            // reached from a WebView the SDK opened. The LRS page's same-window bank redirect is
+            // a fallback for when `window.open` returns nothing; the injected shim always returns
+            // a window object, so the overlay is what gets used. Matches the Android SDK.
+            analytics.trackActionFailed(.navigation(.externalHost, scheme: scheme, webViewType: .main))
+            errorReporter.capture(
+                operation: "main_webview_navigation_blocked",
+                error: CheckoutNavigationError("Main WebView navigation off a GlomoPay origin"),
+                // The origin, never the URL: a bank or callback URL carries payment identifiers.
+                context: ["origin": TrustedOrigin.origin(of: url) ?? "unknown"]
+            )
+            GlomoPayLogger.log("Blocked main-frame navigation off a GlomoPay origin")
+            decisionHandler(.cancel)
+            return
+        }
         if webView === flowWebView {
             // The allowlist belongs here and not on the main WebView, which only ever loads
             // GlomoPay's own checkout document. WKWebView never hands an unknown scheme to the
@@ -760,8 +802,8 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
         ))
-        let flowBridge = GlomoPayJavaScriptBridge { [weak self] body in
-            DispatchQueue.main.async { self?.eventRouter.handle(body: body) }
+        let flowBridge = GlomoPayJavaScriptBridge { [weak self] body, sender in
+            DispatchQueue.main.async { self?.eventRouter.handle(body: body, sender: sender) }
         }
         flowBridgeHandler = flowBridge
         userContentController.add(flowBridge, name: "GlomoPayFlowBridge")
@@ -976,7 +1018,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
         ))
-        let bridge = GlomoPayJavaScriptBridge { [weak self] body in
+        let bridge = GlomoPayJavaScriptBridge { [weak self] body, _ in
             DispatchQueue.main.async { self?.handleCarouselMessage(body) }
         }
         carouselBridgeHandler = bridge
@@ -1506,3 +1548,10 @@ private enum CheckoutMonitoringError: Error {
     case listenerReleased
 }
 #endif
+
+/// Carries a fixed sentence to the error tracker. The reporter sends the type, never the message,
+/// so this exists to name the event rather than to describe it.
+private struct CheckoutNavigationError: Error {
+    let message: String
+    init(_ message: String) { self.message = message }
+}

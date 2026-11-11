@@ -29,12 +29,17 @@ public API changes require a new major release.
   education carousel and your own `server` - are trusted exactly as before.
 - The allow-list is derived from the base URLs this SDK navigates to, including a custom
   `GlomoPayConfig.server`, so a self-hosted checkout is covered without extra setup.
+- Three visible changes on upgrade from 1.1.0. All are the intended end state, and the account setting cannot roll them back - only a downgrade can:
+  - Dark mode **off** for your account: a host app on `.dark`, or on `.auto` with the device in dark, used to show a dark screen in front of a checkout that then rendered light. It is light throughout now.
+  - Dark mode **off** for your account: the loading screen followed the device, so a `.light` host app on a dark device showed a dark loading screen before a light checkout. It is light now.
+  - Dark mode **on** for your account: the loading screen is light until the order loads and then dark, where it used to be dark from the first frame. The gap is one order request, and it closes before the page paints.
+- The dark loading screen uses the checkout page's own background colour rather than black, so there is no seam at the edges while the page settles.
+- Checkouts opened with an explicit `orderType`, and subscription checkouts, stay light throughout: those paths do not load the order, so the account setting is not available to them.
 
 ### Fixed
 
-- A checkout opened with `appColorScheme: .dark` no longer shows a dark screen before a light page renders. The SDK now waits to learn whether dark mode is switched on for your merchant account before colouring anything it draws, and keeps the checkout light until it knows. Nothing changes for an account that has dark mode switched on, or for a host app that asks for `.light`.
+- The checkout no longer paints a colour scheme the page will not render. What the SDK draws before the page's first paint - the loading screen, the checkout WebView and the LRS education carousel - now follows both the scheme your app asked for and whether dark mode is switched on for your Glomo account. What is sent to the page is unchanged: `appColorScheme` still reaches it in full and the page still decides.
 - A WebView told `light` no longer reports `dark` to the page's own `prefers-color-scheme` media query, which could render part of the checkout in the wrong scheme.
-- Checkouts opened with an explicit `orderType`, and subscription checkouts, keep the previous light-only behaviour: those paths do not load the order, so the account setting is not available to them.
 
 ## [1.1.0] - 2026-10-29
 

@@ -268,7 +268,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         // this a dark phone gets a dark loading view in front of a page that will render light.
         // Light until the merchant flag says otherwise; `applyPresentedColorScheme` re-pins it.
         loadingView.overrideUserInterfaceStyle = presentedColorScheme == .dark ? .dark : .light
-        loadingView.backgroundColor = .systemBackground
+        loadingView.backgroundColor = CheckoutSurfaceColors.loadingBackground
 
         let indicator = UIActivityIndicatorView(style: .large)
         indicator.translatesAutoresizingMaskIntoConstraints = false

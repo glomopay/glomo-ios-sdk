@@ -286,7 +286,13 @@ enum GlomoPayInjectionScripts {
             }
           })();
 
+          // Same-document only. This listener forwards to a privileged channel, so without the
+          // source check a third-party iframe on the page - a card partner, an s2s or 3DS frame -
+          // could `top.postMessage({type: 'payment.success'})` and have it relayed as if the page
+          // itself had said it. The native frame check cannot see that: by then the message is
+          // coming from our own main frame.
           window.addEventListener('message', function(event) {
+            if (event.source !== window || event.origin !== location.origin) return;
             if (event.data) bridge(JSON.stringify({type: 'message', data: event.data}));
           });
           window.addEventListener('error', function(event) {

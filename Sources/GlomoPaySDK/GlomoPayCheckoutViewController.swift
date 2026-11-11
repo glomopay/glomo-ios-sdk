@@ -671,22 +671,38 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             return
         }
         if webView === self.webView {
-            // The main WebView hosts GlomoPayBridge, so any document it lands on can speak to the
-            // SDK. It only ever loads GlomoPay's own checkout page, which is worth enforcing
-            // rather than stating. `about:` and `blob:` are WebKit's own intermediate documents,
-            // not a navigation anyone chose.
+            // Main frame only. `decidePolicyFor` fires for subframe loads too, and the checkout
+            // page embeds third-party frames - card entry, s2s, 3-D Secure - whose hosts are not
+            // ours and must keep loading.
+            guard navigationAction.targetFrame?.isMainFrame == true else {
+                decisionHandler(.allow)
+                return
+            }
             let url = navigationAction.request.url
             let scheme = FlowNavigationPolicy.scheme(of: url)
+            // `about:` and `blob:` are WebKit's own intermediate documents, not a navigation
+            // anyone chose.
             if scheme == "about" || scheme == "blob" {
                 decisionHandler(.allow)
                 return
             }
-            guard let origin = TrustedOrigin.origin(of: url), trustedOrigins.contains(origin) else {
-                analytics.trackActionFailed(.navigation(.externalHost, scheme: scheme, webViewType: .main))
-                GlomoPayLogger.log("Blocked main WebView navigation off a GlomoPay origin")
-                decisionHandler(.cancel)
+            if let origin = TrustedOrigin.origin(of: url), trustedOrigins.contains(origin) {
+                decisionHandler(.allow)
                 return
             }
+            // Reported, not cancelled. The checkout page ends a successful payment by navigating
+            // the main frame to the merchant's own `callbackUrl`, which is off-origin by
+            // definition - cancelling it would break that redirect for every merchant who uses
+            // it. The control that matters is the bridge gate: once this document is not ours,
+            // nothing it posts can decide a payment.
+            analytics.trackActionFailed(.navigation(.externalHost, scheme: scheme, webViewType: .main))
+            errorReporter.capture(
+                operation: "main_webview_left_glomopay_origin",
+                error: CheckoutNavigationError("Main WebView navigated off a GlomoPay origin"),
+                // The origin, never the URL: a callback URL carries payment identifiers.
+                context: ["origin": TrustedOrigin.origin(of: url) ?? "unknown"]
+            )
+            GlomoPayLogger.log("Main WebView left a GlomoPay origin")
             decisionHandler(.allow)
             return
         }
@@ -1531,3 +1547,10 @@ private enum CheckoutMonitoringError: Error {
     case listenerReleased
 }
 #endif
+
+/// Carries a fixed sentence to the error tracker. The reporter sends the type, never the message,
+/// so this exists to name the event rather than to describe it.
+private struct CheckoutNavigationError: Error {
+    let message: String
+    init(_ message: String) { self.message = message }
+}

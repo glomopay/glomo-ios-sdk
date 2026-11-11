@@ -16,9 +16,11 @@ public API changes require a new major release.
   navigation is unaffected: a bank page closing the overlay after a 3-D Secure challenge works
   exactly as before. No integration change is required, and the callbacks your app receives from a
   normal payment are unchanged.
-- **The main checkout WebView is now restricted to Glomo origins.** It only ever loaded a Glomo
-  page; that is now enforced rather than assumed. The bank redirect overlay is deliberately not
-  restricted by host, since the bank decides where it goes next.
+- **A main-frame navigation off a Glomo origin is now reported.** It is not blocked: the checkout
+  page ends a successful payment by navigating to your own `callbackUrl`, which is off-origin by
+  definition. Subframe loads - card entry, 3-D Secure - are unaffected.
+- The injected `message` relay now forwards only same-document messages. A third-party frame
+  embedded in a Glomo page can no longer have a payment event relayed on its behalf.
 - The allow-list is derived from the base URLs this SDK navigates to, including a custom
   `GlomoPayConfig.server`, so a self-hosted checkout is covered without extra setup.
 

@@ -6,29 +6,15 @@ This project follows [Semantic Versioning](https://semver.org/).
 Starting with 1.0.0, the public API follows Semantic Versioning. Breaking
 public API changes require a new major release.
 
-## Unreleased
+## [1.2.0] - 2026-11-12
 
 ### Changed
 
-- **Payment and page-lifecycle bridge messages are now accepted only from Glomo checkout pages,
-  and only from a page's main frame.** The bank and 3-D Secure pages shown in the redirect overlay
-  can no longer report a payment result or put a checkout on the error screen. Bank-driven
-  navigation is unaffected: a bank page closing the overlay after a 3-D Secure challenge works
-  exactly as before. No integration change is required, and the callbacks your app receives from a
-  normal payment are unchanged.
-- **The main checkout WebView is now restricted to Glomo origins.** It only ever loaded Glomo
-  pages; that is now enforced rather than assumed, and a top-level navigation anywhere else is
-  blocked and reported. Subframe loads - card entry, 3-D Secure, server-to-server - are
-  unaffected, and the bank redirect overlay is deliberately not restricted by host, since the
-  bank decides where it goes next.
-- The injected `message` relay now forwards only same-document messages. A third-party frame
-  embedded in a Glomo page can no longer have a payment event relayed on its behalf.
-- The trusted-origin rule matches Glomo domains by suffix rather than by an exact host list, so a
-  checkout host that moves or redirects between `glomopay.com` and `glomo.one` keeps working in an
-  SDK version that shipped before the move. Configured origins that are not on a Glomo domain - the
-  education carousel and your own `server` - are trusted exactly as before.
-- The allow-list is derived from the base URLs this SDK navigates to, including a custom
-  `GlomoPayConfig.server`, so a self-hosted checkout is covered without extra setup.
+- **Security policy tightening**
+  - Payment and page-lifecycle bridge messages are now accepted only from Glomo checkout pages, and only from a page's main frame.
+  - Containers hosting Glomo checkouts are now restricted to verified origins.
+  - Events and messages will now be handled as per the same security-oriented same-origin policy.
+  - No integration change is required, and the callbacks your app receives from a normal payment are unchanged.
 - Three visible changes on upgrade from 1.1.0. All are the intended end state, and the account setting cannot roll them back - only a downgrade can:
   - Dark mode **off** for your account: a host app on `.dark`, or on `.auto` with the device in dark, used to show a dark screen in front of a checkout that then rendered light. It is light throughout now.
   - Dark mode **off** for your account: the loading screen followed the device, so a `.light` host app on a dark device showed a dark loading screen before a light checkout. It is light now.

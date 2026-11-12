@@ -11,7 +11,19 @@ final class CheckoutSampleViewModel: ObservableObject, GlomoPayListener {
     @Published var events: [String] = []
     @Published var isStarting = false
 
+    /// Changing this while a checkout is open goes through the handle, not a new config: rebuilding
+    /// the URL would reload the page and lose the payment in flight. Before one is open, and after
+    /// it has finished, the push is dropped and the config value is what the next URL carries.
+    @Published var appColorScheme: GlomoColorScheme = .auto {
+        didSet {
+            guard appColorScheme != oldValue else { return }
+            log("appColorScheme=\(appColorScheme.rawValue)")
+            handle?.setAppColorScheme(appColorScheme)
+        }
+    }
+
     private weak var presenter: UIViewController?
+    private var handle: GlomoPayCheckoutHandle?
 
     func setPresenter(_ presenter: UIViewController) {
         self.presenter = presenter
@@ -28,7 +40,8 @@ final class CheckoutSampleViewModel: ObservableObject, GlomoPayListener {
         let config = GlomoPayConfig(
             publicKey: publicKey.trimmingCharacters(in: .whitespacesAndNewlines),
             orderId: isSubscription ? nil : trimmedIdentifier,
-            subscriptionId: isSubscription ? trimmedIdentifier : nil
+            subscriptionId: isSubscription ? trimmedIdentifier : nil,
+            appColorScheme: appColorScheme
         )
         let errors = GlomoPaySDK.shared.validate(config)
         guard errors.isEmpty else {
@@ -39,7 +52,7 @@ final class CheckoutSampleViewModel: ObservableObject, GlomoPayListener {
         events.removeAll()
         isStarting = true
         status = "Starting checkout..."
-        GlomoPaySDK.shared.startCheckout(
+        handle = GlomoPaySDK.shared.startCheckout(
             from: presenter,
             config: config,
             orderType: "auto",

@@ -1,3 +1,4 @@
+import GlomoPaySDK
 import SwiftUI
 
 struct ContentView: View {
@@ -18,6 +19,12 @@ struct ContentView: View {
                 Section("Checkout") {
                     Text("Checkout type is detected automatically from the order.")
                         .foregroundStyle(.secondary)
+                    Picker("Colour scheme", selection: $model.appColorScheme) {
+                        Text("Auto").tag(GlomoColorScheme.auto)
+                        Text("Light").tag(GlomoColorScheme.light)
+                        Text("Dark").tag(GlomoColorScheme.dark)
+                    }
+                    .pickerStyle(.segmented)
                 }
 
                 Section {

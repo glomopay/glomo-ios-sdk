@@ -90,6 +90,38 @@ The journey type carries one member. Pay-via-bank (lean / open finance) is sunse
 on iOS - matching Flutter and diverging from the RN SDK on purpose - so there is no member for it
 and no event behind it.
 
+### Checkout progress
+
+`onCheckoutStageChanged` and `onCheckoutClosed` report how far a customer got, so an abandoned
+checkout can be attributed to the step it stopped at rather than counted as one undifferentiated
+failure. Both have default implementations, so neither is required.
+
+**Both need checkout progress events switched on for your business**, and they only ever fire on
+LRS checkouts. Until then neither runs and the checkout behaves exactly as it does today.
+
+Payment stages arrive in this order and never repeat, so a funnel can be built by appending:
+`opened` (step `consent` or `bank_list`), `method_selected`, `details_submitted`,
+`attempt_created`, `customer_auth` (step `otp`, `document_upload`, `txn_summary` or `agreements`),
+`provider_handoff`, `awaiting_confirmation`, then `confirmed` or `failed`. `step` appears only on
+`opened` and `customer_auth`; `errorCode` only on `failed`. `provider` is the bank and
+`journeyType` is `redirect` or `native`.
+
+`onCheckoutClosed` fires at most once, with `lastStage`, `lastStep` and a `reason` of
+`user_dismissed`, `user_cancelled`, `completed`, `error` or `confirmation_timeout`. An absent
+`lastStage` means the checkout closed before it finished opening.
+
+Swipe-dismiss and the Close button never reach the page, so the SDK writes that close itself with
+`reason: "user_dismissed"`. It only does so once it has seen a stage it recognises - an absent
+`lastStage` is a claim in its own right, and the SDK will not make one it cannot support.
+
+`onCheckoutClosed` does not replace `onPaymentTerminate`, which still reports every termination
+exactly as before; both fire for the same close.
+
+`stage`, `step`, `provider`, `method` and `reason` are plain `String`s, not enums, because the
+contract adds values without a new payload version. Match on what you care about and ignore the
+rest - `GlomoCheckoutStages` and `GlomoCheckoutCloseReasons` name today's values but are not closed
+sets, and anything the contract adds later is reachable through `rawPayload`.
+
 ### Listener retention and callback rules
 
 The SDK holds the listener **weakly**: it does not keep a merchant object alive. Retain it for at

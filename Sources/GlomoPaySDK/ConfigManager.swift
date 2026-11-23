@@ -84,4 +84,25 @@ public enum ConfigManager {
         if let explicit = orderData["orderType"] as? String, !explicit.isEmpty { return explicit }
         return orderData["lrs"] != nil ? "lrs" : "standard"
     }
+
+    /// Whether the merchant has dark mode switched on, from the order response.
+    ///
+    /// The key is snake_case and has no camelCase alias, unlike `order_type`/`orderType` on the
+    /// same payload. An identity check against `true` rather than a truthiness one: a missing key,
+    /// a null, the string "true" and a number all mean light. Light is the safe answer because the
+    /// page renders light whenever the flag is off, so guessing dark is the only way to be wrong.
+    ///
+    /// `as? Bool` is NOT that identity check on this input, which is why the cast goes through
+    /// `NSNumber` instead. The dictionary comes from `JSONSerialization`, which boxes JSON
+    /// booleans and JSON numbers alike into `NSNumber`, and bridging back hands `1` and `1.0` to
+    /// Swift as `true`. Only the CoreFoundation type tells the two apart once they are in the
+    /// dictionary.
+    ///
+    /// Here rather than on the checkout controller so it is reachable from the macOS test run,
+    /// where everything behind `canImport(UIKit)` is compiled out.
+    static func darkModeEnabled(_ orderData: [String: Any]) -> Bool {
+        guard let value = orderData["dark_mode_enabled"] as? NSNumber,
+              CFGetTypeID(value) == CFBooleanGetTypeID() else { return false }
+        return value.boolValue
+    }
 }

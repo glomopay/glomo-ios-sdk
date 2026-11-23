@@ -94,3 +94,38 @@ extension GlomoColorScheme {
         }
     }
 }
+
+#if canImport(UIKit)
+import UIKit
+
+/// The colours the SDK paints behind the checkout before the page's first paint.
+///
+/// Deliberately one pair, not a palette. The SDK's wider chrome - error panels, the flow header,
+/// the carousel host, the toolbars - is separate work and stays light in both schemes; what is
+/// here is only what a customer sees *before* the page renders.
+///
+/// Labels are not in it: every one of them is a semantic colour that already moves with the
+/// `overrideUserInterfaceStyle` pinned on the surface, so there is nothing to choose.
+enum CheckoutSurfaceColors {
+    /// The checkout page's own dark background, not black.
+    ///
+    /// `.systemBackground` under a `.dark` override resolves to `#000000`, which is visibly
+    /// darker than the page it frames, so the edges seam while the page settles. The same value
+    /// as `CheckoutSurfaceColors.DARK_BACKGROUND` in the Android SDK, on purpose.
+    static let darkBackground = UIColor(
+        red: 0x0F / 255.0,
+        green: 0x17 / 255.0,
+        blue: 0x2A / 255.0,
+        alpha: 1
+    )
+
+    /// Light deliberately resolves `.systemBackground` rather than hardcoding white: that is
+    /// exactly what the surface was before this pair existed, so a merchant whose dark-mode flag
+    /// is off keeps the pixels they already had.
+    static let loadingBackground = UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? Self.darkBackground
+            : UIColor.systemBackground.resolvedColor(with: traits)
+    }
+}
+#endif

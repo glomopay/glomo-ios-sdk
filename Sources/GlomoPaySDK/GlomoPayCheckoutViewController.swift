@@ -1519,11 +1519,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         didTerminate = true
         cancelOpenWatchdogs()
         deliverToListener { $0.onPaymentTerminate(source) }
-        // Every close the host or the customer starts lands here, and none of them reaches the
-        // page - so if the page never sent its own close, this is the last chance to report where
-        // the customer stopped. The router owns the one-close-per-checkout rule and decides
-        // whether there is anything to say; a programmatic close maps to no reason and is skipped.
-        eventRouter?.deliverNativeClose(reason: GlomoCheckoutCloseReasons.forTermination(source))
+        eventRouter?.deliverNativeClose(source: source)
         flushTerminalErrorReports()
         dismiss(animated: true)
     }

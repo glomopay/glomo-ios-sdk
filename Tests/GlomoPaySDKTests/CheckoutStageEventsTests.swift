@@ -2,7 +2,6 @@ import XCTest
 
 @testable import GlomoPaySDK
 
-/// A payment stage change as `events-table.md` describes it, with every optional field populated.
 private func stageChanged(_ overrides: [String: Any?] = [:]) -> [String: Any] {
     var payload: [String: Any] = [
         "v": 1,
@@ -29,6 +28,16 @@ private func stageEnvelope(_ payload: [String: Any]?) -> [String: Any] {
     return ["type": "message", "data": data]
 }
 
+private func outcomeEnvelope(_ type: String) -> [String: Any] {
+    [
+        "type": "message",
+        "data": [
+            "type": type,
+            "payload": ["orderId": "order_abc123", "paymentId": "pay_1", "signature": "sig"],
+        ],
+    ]
+}
+
 private func closedEnvelope(_ payload: [String: Any]?) -> [String: Any] {
     var data: [String: Any] = ["type": "checkout.closed"]
     if let payload { data["payload"] = payload }
@@ -39,12 +48,15 @@ final class CheckoutStageEventsTests: XCTestCase {
     private let trusted: Set<String> = ["https://checkout.glomopay.com"]
     private let glomoFrame = BridgeMessageSender(origin: "https://checkout.glomopay.com", isMainFrame: true)
 
-    private func makeRouter(listener: StageRecordingListener) -> GlomoPayEventRouter {
+    private func makeRouter(
+        listener: StageRecordingListener?,
+        errorReporter: StageReporter = StageReporter()
+    ) -> GlomoPayEventRouter {
         GlomoPayEventRouter(
             listener: listener,
             onComplete: { _ in },
             analytics: StageAnalytics(),
-            errorReporter: StageReporter(),
+            errorReporter: errorReporter,
             trustedOrigins: trusted
         )
     }
@@ -114,9 +126,7 @@ final class CheckoutStageEventsTests: XCTestCase {
         XCTAssertEqual(listener.terminations, [.userDismiss])
     }
 
-    /// The switch-off path. With checkout progress events off for the merchant the page still
-    /// posts the close, with nothing in it, so the pre-v1 behaviour has to survive unchanged.
-    func testACloseWithNoPayloadTerminatesExactlyAsItDidBefore() {
+    func testACloseWithNoPayloadOnlyTerminates() {
         let listener = StageRecordingListener()
         makeRouter(listener: listener).handle(body: closedEnvelope(nil), sender: glomoFrame)
 
@@ -144,7 +154,7 @@ final class CheckoutStageEventsTests: XCTestCase {
         let router = makeRouter(listener: listener)
         router.handle(body: stageEnvelope(stageChanged()), sender: glomoFrame)
 
-        router.deliverNativeClose(reason: GlomoCheckoutCloseReasons.userDismissed)
+        router.deliverNativeClose(source: .userDismiss)
 
         let event = try! XCTUnwrap(listener.closes.first)
         XCTAssertEqual(event.reason, "user_dismissed")
@@ -158,7 +168,7 @@ final class CheckoutStageEventsTests: XCTestCase {
 
     func testANativeDismissalStaysSilentWhenNoStageEverArrived() {
         let listener = StageRecordingListener()
-        makeRouter(listener: listener).deliverNativeClose(reason: GlomoCheckoutCloseReasons.userDismissed)
+        makeRouter(listener: listener).deliverNativeClose(source: .userDismiss)
 
         XCTAssertTrue(listener.closes.isEmpty)
     }
@@ -168,22 +178,21 @@ final class CheckoutStageEventsTests: XCTestCase {
         let router = makeRouter(listener: listener)
         router.handle(body: stageEnvelope(stageChanged(["stage": "teleported"])), sender: glomoFrame)
 
-        router.deliverNativeClose(reason: GlomoCheckoutCloseReasons.userDismissed)
+        router.deliverNativeClose(source: .userDismiss)
 
         XCTAssertEqual(listener.stages.count, 1)
         XCTAssertTrue(listener.closes.isEmpty)
     }
 
-    /// The dismissal path is reachable more than once - `terminate` and a presentation dismiss can
-    /// both run - and neither sets the router's terminal flag, so the one-close rule here rests on
-    /// its own latch rather than on the terminal guard above it.
+    /// `terminate` and a presentation dismiss can both fire; the router's own latch, not the
+    /// terminal guard, keeps it to one close.
     func testTheCloseIsWrittenOnceHoweverManyTimesTheDismissalPathFires() {
         let listener = StageRecordingListener()
         let router = makeRouter(listener: listener)
         router.handle(body: stageEnvelope(stageChanged()), sender: glomoFrame)
 
-        router.deliverNativeClose(reason: GlomoCheckoutCloseReasons.userDismissed)
-        router.deliverNativeClose(reason: GlomoCheckoutCloseReasons.userDismissed)
+        router.deliverNativeClose(source: .userDismiss)
+        router.deliverNativeClose(source: .userDismiss)
 
         XCTAssertEqual(listener.closes.count, 1)
     }
@@ -204,48 +213,158 @@ final class CheckoutStageEventsTests: XCTestCase {
             sender: glomoFrame
         )
 
-        router.deliverNativeClose(reason: GlomoCheckoutCloseReasons.userDismissed)
+        router.deliverNativeClose(source: .userDismiss)
 
         XCTAssertEqual(listener.closes.map(\.reason), ["user_cancelled"])
     }
 
-    func testANativeDismissalAddsNothingAfterAPaymentOutcomeWasDelivered() {
+    func testASuccessfulPaymentClosesAsCompleted() {
         let listener = StageRecordingListener()
         let router = makeRouter(listener: listener)
         router.handle(body: stageEnvelope(stageChanged()), sender: glomoFrame)
-        router.handle(
-            body: [
-                "type": "message",
-                "data": [
-                    "type": "payment.success",
-                    "payload": ["orderId": "order_abc123", "paymentId": "pay_1", "signature": "sig"],
-                ],
-            ],
-            sender: glomoFrame
-        )
 
-        router.deliverNativeClose(reason: GlomoCheckoutCloseReasons.userDismissed)
+        router.handle(body: outcomeEnvelope("payment.success"), sender: glomoFrame)
 
         XCTAssertEqual(listener.successes.count, 1)
-        XCTAssertTrue(listener.closes.isEmpty)
+        XCTAssertEqual(listener.closes.map(\.reason), [GlomoCheckoutCloseReasons.completed])
+        XCTAssertEqual(listener.closes.first?.lastStage, "customer_auth")
     }
 
-    /// A checkout closed by host code has no honest reason in the contract - `merchant_closed`
-    /// was dropped before it shipped - so nothing is sent.
-    func testACloseWithNoContractReasonSaysNothing() {
+    func testAFailedPaymentClosesAsAnError() {
         let listener = StageRecordingListener()
         let router = makeRouter(listener: listener)
         router.handle(body: stageEnvelope(stageChanged()), sender: glomoFrame)
 
-        router.deliverNativeClose(reason: GlomoCheckoutCloseReasons.forTermination(.programmatic))
+        router.handle(body: outcomeEnvelope("payment.failure"), sender: glomoFrame)
 
+        XCTAssertEqual(listener.closes.map(\.reason), [GlomoCheckoutCloseReasons.error])
+    }
+
+    func testADismissalAfterAnOutcomeDoesNotTurnItIntoAnAbandonment() {
+        let listener = StageRecordingListener()
+        let router = makeRouter(listener: listener)
+        router.handle(body: stageEnvelope(stageChanged()), sender: glomoFrame)
+        router.handle(body: outcomeEnvelope("payment.success"), sender: glomoFrame)
+
+        router.deliverNativeClose(source: .userDismiss)
+
+        XCTAssertEqual(listener.closes.map(\.reason), [GlomoCheckoutCloseReasons.completed])
+    }
+
+    /// The outcome lands while the only stage so far is one the SDK will not quote, so no close is
+    /// written at the outcome itself and the reason has to be read off the outcome later.
+    func testAnOutcomeOutranksTheStageThatArrivesAfterIt() {
+        let listener = StageRecordingListener()
+        let router = makeRouter(listener: listener)
+        router.handle(body: stageEnvelope(stageChanged(["stage": "teleported"])), sender: glomoFrame)
+        router.handle(body: outcomeEnvelope("payment.success"), sender: glomoFrame)
+        XCTAssertTrue(listener.closes.isEmpty, "nothing to quote back yet")
+
+        router.handle(
+            body: stageEnvelope(stageChanged(["stage": "awaiting_confirmation", "step": nil])),
+            sender: glomoFrame
+        )
+        router.deliverNativeClose(source: .userDismiss)
+
+        XCTAssertEqual(listener.closes.map(\.reason), [GlomoCheckoutCloseReasons.completed])
+    }
+
+    func testAConfirmedStageClosesAsCompletedWithoutAnyOutcome() {
+        let listener = StageRecordingListener()
+        let router = makeRouter(listener: listener)
+        router.handle(body: stageEnvelope(stageChanged(["stage": "confirmed", "step": nil])), sender: glomoFrame)
+
+        router.deliverNativeClose(source: .userDismiss)
+
+        XCTAssertEqual(listener.closes.map(\.reason), [GlomoCheckoutCloseReasons.completed])
+    }
+
+    func testAFailedStageClosesAsAnErrorWithoutAnyOutcome() {
+        let listener = StageRecordingListener()
+        let router = makeRouter(listener: listener)
+        router.handle(body: stageEnvelope(stageChanged(["stage": "failed", "step": nil])), sender: glomoFrame)
+
+        router.deliverNativeClose(source: .userDismiss)
+
+        XCTAssertEqual(listener.closes.map(\.reason), [GlomoCheckoutCloseReasons.error])
+    }
+
+    func testTheSdksOwnErrorScreenClosesAsAnError() {
+        let listener = StageRecordingListener()
+        let router = makeRouter(listener: listener)
+        router.handle(body: stageEnvelope(stageChanged()), sender: glomoFrame)
+
+        router.deliverNativeClose(source: .connectionError)
+
+        XCTAssertEqual(listener.closes.map(\.reason), [GlomoCheckoutCloseReasons.error])
+    }
+
+    func testAnEmptyStagePayloadIsNotAV0Event() {
+        let listener = StageRecordingListener()
+
+        makeRouter(listener: listener).handle(body: stageEnvelope([:]), sender: glomoFrame)
+
+        XCTAssertTrue(listener.stages.isEmpty)
+    }
+
+    func testAnEmptyClosePayloadIsNotAV0Event() {
+        let listener = StageRecordingListener()
+
+        makeRouter(listener: listener).handle(body: closedEnvelope([:]), sender: glomoFrame)
+
+        XCTAssertTrue(listener.closes.isEmpty)
+        XCTAssertEqual(listener.terminations, [.userDismiss])
+    }
+
+    func testAPayloadStampedWithAnotherContractVersionIsDropped() {
+        let listener = StageRecordingListener()
+        let router = makeRouter(listener: listener)
+
+        router.handle(body: stageEnvelope(stageChanged(["v": 2])), sender: glomoFrame)
+        router.handle(body: closedEnvelope(stageChanged(["v": 2, "reason": "user_cancelled"])), sender: glomoFrame)
+
+        XCTAssertTrue(listener.stages.isEmpty)
         XCTAssertTrue(listener.closes.isEmpty)
     }
 
-    func testEachTerminationSourceMapsToTheOnlyHonestContractReason() {
-        XCTAssertEqual(GlomoCheckoutCloseReasons.forTermination(.userDismiss), "user_dismissed")
-        XCTAssertEqual(GlomoCheckoutCloseReasons.forTermination(.connectionError), "error")
-        XCTAssertNil(GlomoCheckoutCloseReasons.forTermination(.programmatic))
+    /// The page posts a JSON string on the WKScriptMessage path, not a dictionary, so the decode
+    /// in `handle(body:)` is the only thing standing between the page and the funnel.
+    func testAStageChangeArrivesThroughTheJsonStringBridgePath() throws {
+        let listener = StageRecordingListener()
+        let encoded = try JSONSerialization.data(withJSONObject: stageEnvelope(stageChanged()))
+        let message = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+
+        makeRouter(listener: listener).handle(body: message, sender: glomoFrame)
+
+        XCTAssertEqual(listener.stages.map(\.stage), ["customer_auth"])
+    }
+
+    /// The listener is weak, and progress fires many times per checkout: reporting a released
+    /// listener once per stage would bury the one report that matters.
+    func testStageEventsDoNotReportAReleasedListener() {
+        let reporter = StageReporter()
+        let router: GlomoPayEventRouter
+        do {
+            let listener = StageRecordingListener()
+            router = makeRouter(listener: listener, errorReporter: reporter)
+            router.handle(body: stageEnvelope(stageChanged()), sender: glomoFrame)
+        }
+
+        router.handle(body: stageEnvelope(stageChanged(["stage": "confirmed", "step": nil])), sender: glomoFrame)
+        XCTAssertTrue(reporter.operations.isEmpty, "a stage event must not report a released listener")
+
+        router.handle(body: outcomeEnvelope("payment.success"), sender: glomoFrame)
+        XCTAssertEqual(reporter.operations, ["listener_unavailable"], "a result still reports it")
+    }
+
+    func testACloseTheHostAskedForSaysNothing() {
+        let listener = StageRecordingListener()
+        let router = makeRouter(listener: listener)
+        router.handle(body: stageEnvelope(stageChanged()), sender: glomoFrame)
+
+        router.deliverNativeClose(source: .programmatic)
+
+        XCTAssertTrue(listener.closes.isEmpty)
     }
 
     func testARecognisedKycStageIsRememberedEvenThoughLrsNeverSendsOne() {
@@ -256,7 +375,7 @@ final class CheckoutStageEventsTests: XCTestCase {
             sender: glomoFrame
         )
 
-        router.deliverNativeClose(reason: GlomoCheckoutCloseReasons.userDismissed)
+        router.deliverNativeClose(source: .userDismiss)
 
         XCTAssertEqual(listener.closes.map(\.lastStage), ["under_review"])
     }
@@ -266,14 +385,12 @@ final class CheckoutStageEventsTests: XCTestCase {
         let router = makeRouter(listener: listener)
         router.handle(body: stageEnvelope(stageChanged(["stage": "under_review"])), sender: glomoFrame)
 
-        router.deliverNativeClose(reason: GlomoCheckoutCloseReasons.userDismissed)
+        router.deliverNativeClose(source: .userDismiss)
 
         XCTAssertEqual(listener.stages.map(\.stage), ["under_review"])
         XCTAssertTrue(listener.closes.isEmpty)
     }
 
-    /// A bank page must not be able to invent a funnel, for the same reason it cannot invent a
-    /// payment result: `message` is a privileged type and the origin gate owns it.
     func testAStageChangeFromAnUntrustedFrameIsDropped() {
         let listener = StageRecordingListener()
         let bankFrame = BridgeMessageSender(origin: "https://netbanking.bank.example", isMainFrame: true)
@@ -364,9 +481,13 @@ private final class StageRecordingListener: GlomoPayListener {
 }
 
 private final class StageReporter: SDKErrorReporting, @unchecked Sendable {
+    private(set) var operations: [String] = []
+
     func updateFlowType(_ flowType: String) {}
     func addBreadcrumb(category: String, message: String, data: [String: Any?]) {}
-    func capture(operation: String, error: Error, context: [String: Any?]) {}
+    func capture(operation: String, error: Error, context: [String: Any?]) {
+        operations.append(operation)
+    }
 }
 
 private final class StageAnalytics: AnalyticsTracking {

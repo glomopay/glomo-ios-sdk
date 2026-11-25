@@ -285,24 +285,15 @@ public protocol GlomoPayListener: AnyObject {
 
     /// The customer reached a new checkout stage, or a new step within one.
     ///
-    /// LRS checkouts only, and only once checkout progress events are switched on for the
-    /// merchant. Until then this never fires and the checkout behaves exactly as it did before.
-    ///
-    /// Relayed from the checkout page untouched. Treat `stage` and the other string fields as
-    /// open: new values can appear without a new payload version, and are forwarded rather than
-    /// filtered.
+    /// LRS only, and only when checkout progress events are enabled for the merchant. Relayed
+    /// from the page; treat `stage` and the other strings as open sets.
     func onCheckoutStageChanged(_ event: GlomoCheckoutStageChangedEvent)
 
-    /// The checkout closed, carrying the furthest stage it reached and why it ended.
+    /// The checkout closed, with the furthest stage reached and why. At most once per checkout,
+    /// under the same conditions as `onCheckoutStageChanged`.
     ///
-    /// Delivered at most once per checkout, under the same conditions as
-    /// `onCheckoutStageChanged`. It does not replace `onPaymentTerminate`, which still reports
-    /// every termination unchanged - this adds where the customer stopped, and both fire.
-    ///
-    /// When the customer dismisses the sheet the page never runs its own close path, so the SDK
-    /// writes the event itself with reason `user_dismissed`. It only does so once it has seen a
-    /// stage it recognises, because an absent `lastStage` means "closed before the checkout
-    /// opened" and the SDK will not assert that when it simply does not know.
+    /// Fires alongside `onPaymentTerminate`, not instead of it. On a sheet dismissal the SDK writes
+    /// it itself (`user_dismissed`), and only after it has seen a recognised stage.
     func onCheckoutClosed(_ event: GlomoCheckoutClosedEvent)
 }
 
@@ -310,7 +301,6 @@ public extension GlomoPayListener {
     /// Optional: not every host distinguishes a dismissal from a result.
     func onPaymentTerminate(_ source: TerminationSource) {}
 
-    /// Optional: a host that does not build a drop-off funnel needs neither of these.
     func onCheckoutStageChanged(_ event: GlomoCheckoutStageChangedEvent) {}
 
     func onCheckoutClosed(_ event: GlomoCheckoutClosedEvent) {}

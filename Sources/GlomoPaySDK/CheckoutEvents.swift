@@ -1,22 +1,12 @@
 import Foundation
 
-/// The v1 checkout progress contract, as the checkout page sends it.
-///
-/// Hand-written from `checkout-events.schema.json` and `events-table.md` in the checkout monorepo.
-/// That package publishes no Swift and ships no fixtures, so this is a transcription rather than a
-/// generated binding - when the schema moves, this file has to be re-read against it.
-///
-/// `stage`, `step`, `provider`, `method` and `reason` are plain strings on purpose. The contract
-/// types them as open strings so a new bank, screen or close reason reaches a merchant instead of
-/// failing their validator, and an enum here would turn each of those additions into a dropped
-/// event in every host already shipped. `GlomoCheckoutStages` and friends name today's values for
-/// comparison; none of them is a closed set.
-public enum GlomoCheckoutEventContract {
-    /// The payload version this SDK understands.
-    public static let version = 1
+/// v1 checkout progress contract, hand-transcribed from `checkout-events.schema.json` in the
+/// checkout monorepo; keep in sync with it. `stage`, `step`, `provider`, `method` and `reason`
+/// are open strings: an enum would drop new values in hosts already shipped.
+enum GlomoCheckoutEventContract {
+    static let version = 1
 }
 
-/// Payment-flow stages, in the order the page emits them.
 public enum GlomoCheckoutStages {
     public static let opened = "opened"
     public static let methodSelected = "method_selected"
@@ -28,23 +18,19 @@ public enum GlomoCheckoutStages {
     public static let confirmed = "confirmed"
     public static let failed = "failed"
 
-    /// In emission order. The page only ever moves forward through these.
-    public static let payment = [
+    /// The page only moves forward through these.
+    static let payment = [
         opened, methodSelected, detailsSubmitted, attemptCreated,
         customerAuth, providerHandoff, awaitingConfirmation, confirmed, failed,
     ]
 
-    /// Reserved in the contract; the LRS checkout does not send these today.
-    public static let kyc = [
+    /// Reserved in the contract; the LRS checkout does not send these.
+    static let kyc = [
         opened, "in_progress", "submitted", "under_review",
         "action_required", "approved", "rejected", "expired", "failed",
     ]
 }
 
-/// Why a checkout closed.
-///
-/// `merchant_closed` was dropped from the contract before it shipped, which is why a checkout
-/// closed by host code reports no close event at all rather than borrowing one of these.
 public enum GlomoCheckoutCloseReasons {
     public static let userDismissed = "user_dismissed"
     public static let userCancelled = "user_cancelled"
@@ -55,20 +41,39 @@ public enum GlomoCheckoutCloseReasons {
     /// The reason to report for a close this SDK writes itself, or nil when the contract has no
     /// honest value for it.
     ///
-    /// `.programmatic` returns nil: the merchant closed the checkout, so none of the five reasons
-    /// describes it, and the merchant already knows. Reporting `user_dismissed` there would blame
-    /// the customer for the host's own call.
-    public static func forTermination(_ source: TerminationSource) -> String? {
-        switch source {
-        case .userDismiss: return userDismissed
-        case .connectionError: return error
-        case .programmatic: return nil
+    /// `.programmatic` returns nil: the merchant closed the checkout, so `user_dismissed` would
+    /// blame the customer. A delivered outcome outranks the rest - the journey ended in a result,
+    /// and the dismissal is only the customer leaving the screen that said so.
+    static func forClose(
+        source: TerminationSource,
+        outcome: CheckoutOutcome?,
+        lastStage: String?
+    ) -> String? {
+        if source == .programmatic { return nil }
+        switch outcome {
+        // Submitted, not settled - but the customer finished what the checkout asked of them,
+        // and the contract has no separate reason for it.
+        case .succeeded, .journeySubmitted: return completed
+        case .failed: return error
+        case nil: break
+        }
+        if source == .connectionError { return error }
+        switch lastStage {
+        case GlomoCheckoutStages.confirmed: return completed
+        case GlomoCheckoutStages.failed: return error
+        default: return userDismissed
         }
     }
 }
 
-/// What the checkout is for. On LRS this is always the order.
-public struct GlomoCheckoutResource: Equatable {
+/// How the journey ended, where it ended at all.
+enum CheckoutOutcome {
+    case succeeded
+    case failed
+    case journeySubmitted
+}
+
+public struct GlomoCheckoutResource: Equatable, Sendable {
     public let type: String
     public let id: String
 
@@ -86,8 +91,8 @@ public struct GlomoCheckoutResource: Equatable {
     }
 }
 
-/// Position within a multi-part step, where the page reports one. 1-based.
-public struct GlomoCheckoutSegment: Equatable {
+/// 1-based position within a multi-part step.
+public struct GlomoCheckoutSegment: Equatable, Sendable {
     public let index: Int
     public let total: Int
 
@@ -96,7 +101,6 @@ public struct GlomoCheckoutSegment: Equatable {
         self.total = total
     }
 
-    /// Dropped rather than half-built: a segment missing a bound says nothing useful.
     init?(json: Any?) {
         guard let data = json as? [String: Any],
               let index = data["index"] as? Int,
@@ -106,14 +110,12 @@ public struct GlomoCheckoutSegment: Equatable {
     }
 }
 
-/// The customer reached a new stage, or a new step within the current stage.
+/// Stages arrive in order; each stage and step pair arrives at most once. `rawPayload` holds
+/// the payload as received, including fields newer than this SDK.
 ///
-/// Every field is relayed from the page; the SDK derives none of them. Stages arrive in order and
-/// never repeat, so a drop-off funnel can be built by appending.
-///
-/// `rawPayload` carries the payload exactly as it arrived, including any field added to the
-/// contract after this SDK was built. Read it when a value you need has no typed property yet.
-public struct GlomoCheckoutStageChangedEvent: Equatable {
+/// `@unchecked Sendable`: every stored property is a `let`, and `rawPayload` is built from
+/// `JSONSerialization` output, whose values are immutable Foundation types.
+public struct GlomoCheckoutStageChangedEvent: Equatable, @unchecked Sendable {
     public let version: Int
     public let resource: GlomoCheckoutResource
     public let journeyId: String
@@ -161,13 +163,8 @@ public struct GlomoCheckoutStageChangedEvent: Equatable {
         self.rawPayload = rawPayload
     }
 
-    /// Parses leniently and never fails.
-    ///
-    /// A payload that violates the contract is still delivered, with missing strings read as empty:
-    /// a merchant comparing this against the web SDK should see one contract, and the web SDK
-    /// forwards contract-violating payloads unchanged. `rawPayload` is always the authority on what
-    /// actually arrived.
-    public init(json: [String: Any]) {
+    /// Lenient like the web SDK: a contract-violating payload is delivered, missing strings empty.
+    init(json: [String: Any]) {
         self.init(
             version: json["v"] as? Int ?? 0,
             resource: GlomoCheckoutResource(json: json["resource"]),
@@ -187,11 +184,10 @@ public struct GlomoCheckoutStageChangedEvent: Equatable {
     }
 }
 
-/// The checkout closed, with the furthest point it reached.
+/// An absent `lastStage` means the checkout closed before it opened.
 ///
-/// Delivered at most once per checkout. `lastStage` is absent when the checkout closed before it
-/// finished opening - so an absent value is a claim in its own right, not merely a missing field.
-public struct GlomoCheckoutClosedEvent: Equatable {
+/// `@unchecked Sendable` for the same reason as `GlomoCheckoutStageChangedEvent`.
+public struct GlomoCheckoutClosedEvent: Equatable, @unchecked Sendable {
     public let version: Int
     public let resource: GlomoCheckoutResource
     public let journeyId: String
@@ -230,8 +226,7 @@ public struct GlomoCheckoutClosedEvent: Equatable {
         self.rawPayload = rawPayload
     }
 
-    /// Parses leniently and never fails, for the same reason as the stage event above.
-    public init(json: [String: Any]) {
+    init(json: [String: Any]) {
         self.init(
             version: json["v"] as? Int ?? 0,
             resource: GlomoCheckoutResource(json: json["resource"]),
@@ -249,24 +244,15 @@ public struct GlomoCheckoutClosedEvent: Equatable {
 }
 
 extension GlomoCheckoutStageChangedEvent {
-    /// Whether this is a stage the SDK can quote back in a close it writes itself.
-    ///
-    /// An unrecognised stage is not an error - it was already forwarded to the merchant - it just
-    /// cannot become the SDK's own claim about where the customer stopped.
+    /// Whether the SDK may quote this stage in a close it writes itself.
     var isRecognised: Bool {
         guard version == GlomoCheckoutEventContract.version else { return false }
         guard !journeyId.isEmpty, !resource.id.isEmpty else { return false }
-        // An absent or unrecognised flow reads as the payment flow: LRS is the only flow that
-        // ships, and the two stage sets overlap only on values meaning the same thing in both.
+        // Unknown flows fall back to payment; the two sets only share values meaning the same.
         let known = flow == "kyc" ? GlomoCheckoutStages.kyc : GlomoCheckoutStages.payment
         return known.contains(stage)
     }
 
-    /// The close the SDK writes when the customer leaves without the page getting to say so.
-    ///
-    /// Everything except `reason` and `at` is copied from this stage change rather than
-    /// reconstructed, so the event reconciles against the stage events the merchant already
-    /// received. `at` is the moment of the close, not of the stage change.
     func synthesisedClose(reason: String, at closedAt: String) -> GlomoCheckoutClosedEvent {
         GlomoCheckoutClosedEvent(
             version: version,
@@ -283,9 +269,18 @@ extension GlomoCheckoutStageChangedEvent {
     }
 }
 
+/// Whether a payload may be delivered at all.
+///
+/// No payload is the switch-off path and `[:]` is what arrives when the flag drops mid-session;
+/// neither can become a typed event without inventing fields, and a payload stamped with another
+/// contract version is not ours to read.
+func isDeliverableCheckoutPayload(_ payload: [String: Any]?) -> Bool {
+    guard let payload, !payload.isEmpty else { return false }
+    return payload["v"] as? Int == GlomoCheckoutEventContract.version
+}
+
 private extension [String: Any] {
-    /// Absent and empty are the same thing to a consumer, and the contract gives every optional
-    /// string a minimum length - so an empty one is read as absent rather than carried through.
+    /// The contract gives optional strings a minimum length, so empty reads as absent.
     func nonEmptyString(_ key: String) -> String? {
         (self[key] as? String).flatMap { $0.isEmpty ? nil : $0 }
     }

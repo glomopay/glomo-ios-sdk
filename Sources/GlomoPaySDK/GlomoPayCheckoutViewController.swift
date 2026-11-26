@@ -1584,11 +1584,8 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         }
     }
 
-    /// What `onCheckoutClosed` reports, which is not always what `onPaymentTerminate` reports.
-    ///
-    /// Leaving the SDK's own error screen is an error exit however the customer does it - the
-    /// Cancel button, a swipe, the Close item - but the termination source is an existing merchant
-    /// contract and keeps saying which gesture it was.
+    /// Leaving the SDK's own error screen is an error exit however it is done, while
+    /// `onPaymentTerminate` keeps reporting the gesture it has always reported.
     private func closeSource(for source: TerminationSource) -> TerminationSource {
         guard source == .userDismiss, errorView != nil || flowErrorView != nil else { return source }
         return .connectionError

@@ -53,7 +53,8 @@ final class CheckoutProgressControllerTests: XCTestCase {
         super.tearDown()
     }
 
-    /// Hosted in a window so the dismissal path has somewhere to run.
+    /// The window gives UIKit somewhere to put the view. Presentation does not complete in this
+    /// environment, and nothing here depends on it.
     private func makeController(
         listener: GlomoPayListener,
         autoClose: Bool = true,
@@ -173,13 +174,8 @@ final class CheckoutProgressControllerTests: XCTestCase {
         assertCloseIsLastAndSingle(listener.log)
     }
 
-    /// `handle.close()` on the handle `startCheckout` returns calls exactly this.
-    ///
-    /// The host's close re-enters while the result is still being delivered, before `handleResult`
-    /// has set `didTerminate`, so `onPaymentTerminate` runs for the close the host asked for. That
-    /// is this SDK's existing rule - every termination is reported - and it differs from Flutter,
-    /// which suppresses the callback once a result has gone out. The close is still single and
-    /// still last, which is what the contract constrains.
+    /// `handle.close()` calls exactly this. The close re-enters before `didTerminate` is set, so
+    /// the termination is reported too - this SDK reports every termination.
     func testAHostClosingFromOnPaymentSuccessStillGetsExactlyOneClose() throws {
         let listener = OrderedCheckoutListener()
         let controller = makeController(listener: listener)
@@ -277,6 +273,30 @@ final class CheckoutProgressControllerTests: XCTestCase {
             listener.log,
             ["stage:customer_auth", "terminate:userDismiss", "closed:error:customer_auth"]
         )
+        assertCloseIsLastAndSingle(listener.log)
+    }
+
+    /// The bank page has its own error screen, and leaving it is the same kind of exit.
+    func testLeavingTheBankPagesErrorScreenAlsoClosesAsAnError() throws {
+        let listener = OrderedCheckoutListener()
+        let controller = makeController(listener: listener, autoClose: false, orderType: "standard")
+        try post(stage("provider_handoff"), into: controller)
+        try post(["type": "window.open", "url": "https://bank.example/acs?token=abc"], into: controller)
+
+        let webViews = webViews(in: controller.view)
+        XCTAssertGreaterThanOrEqual(webViews.count, 2, "the flow WebView was never opened")
+        controller.webView(
+            try XCTUnwrap(webViews.last),
+            didFailProvisionalNavigation: nil,
+            withError: NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet, userInfo: nil)
+        )
+        controller.presentationControllerDidDismiss(UIPresentationController(
+            presentedViewController: controller,
+            presenting: nil
+        ))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+
+        XCTAssertEqual(listener.log.last, "closed:error:provider_handoff")
         assertCloseIsLastAndSingle(listener.log)
     }
 

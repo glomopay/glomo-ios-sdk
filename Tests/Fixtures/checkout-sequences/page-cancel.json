@@ -1,0 +1,43 @@
+[
+  {
+    "type": "message",
+    "data": {
+      "type": "checkout.stage_changed",
+      "payload": {
+        "v": 1,
+        "method": "lrs",
+        "resource": {
+          "type": "order",
+          "id": "order_abc123"
+        },
+        "paymentId": "pay_abc123",
+        "journeyId": "jrn_abc123",
+        "at": "2026-11-23T06:00:00.000Z",
+        "flow": "payment",
+        "stage": "customer_auth",
+        "provider": "HDFC",
+        "journeyType": "native",
+        "step": "otp"
+      }
+    }
+  },
+  {
+    "type": "message",
+    "data": {
+      "type": "checkout.closed",
+      "payload": {
+        "v": 1,
+        "resource": {
+          "type": "order",
+          "id": "order_abc123"
+        },
+        "journeyId": "jrn_abc123",
+        "at": "2026-11-23T06:05:00.000Z",
+        "flow": "payment",
+        "reason": "user_cancelled",
+        "lastStage": "customer_auth",
+        "lastStep": "otp"
+      }
+    }
+  }
+]

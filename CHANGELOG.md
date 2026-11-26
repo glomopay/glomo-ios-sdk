@@ -15,13 +15,15 @@ public API changes require a new major release.
   authentication, handed off to the bank, awaiting confirmation - and carries the bank, the journey
   type and the step within a stage where there is one. Stages arrive in order and each stage and
   step pair fires at most once, so a drop-off funnel can be built by appending.
-- **`onCheckoutClosed` on `GlomoPayListener`**, delivered once per checkout with the furthest stage
-  it reached and why it ended (`user_dismissed`, `user_cancelled`, `completed`, `error`,
-  `confirmation_timeout`). This is what lets a customer who abandoned at the bank be told apart
-  from one who never chose a bank. When the customer swipes the sheet away, taps Close or leaves
-  the SDK's connection-error screen, the SDK reports the close itself - `completed` after a
-  successful payment, `error` after a failed one or from the error screen, and `user_dismissed`
-  otherwise. A checkout closed by your own code reports none.
+- **`onCheckoutClosed` on `GlomoPayListener`**, delivered at most once per checkout with the
+  furthest stage the page reported and why it ended (`user_dismissed`, `user_cancelled`,
+  `completed`, `error`, `confirmation_timeout`). This is what lets a customer who abandoned at the
+  bank be told apart from one who never chose a bank. When the customer swipes the sheet away, taps
+  Close or leaves the SDK's connection-error screen, the SDK reports the close itself - `completed`
+  after a successful payment, `error` after a failed one or from the error screen, and
+  `user_dismissed` otherwise. A checkout closed by your own code before it reached a payment result
+  reports none. On a declined payment `lastStage` is the stage before `failed`, because the page
+  reports the failure ahead of that stage and the checkout closes on the failure.
 - **Types for the above**: `GlomoCheckoutStageChangedEvent`, `GlomoCheckoutClosedEvent`,
   `GlomoCheckoutResource`, `GlomoCheckoutSegment`, and the `GlomoCheckoutStages` /
   `GlomoCheckoutCloseReasons` constants. The event types are `Sendable`.
@@ -30,7 +32,8 @@ Both callbacks need checkout progress events switched on for your business - tal
 contact. Until then the checkout behaves exactly as it does today and neither fires. Only v1
 payloads are delivered: an empty or differently versioned payload reports nothing.
 `onPaymentTerminate` is unchanged and still reports every termination; `onCheckoutClosed` adds
-where the customer stopped rather than replacing it, and both fire for the same close.
+where the customer stopped rather than replacing it. It is the last event of every checkout, after
+`onPaymentTerminate` wherever that still fires.
 
 Source-compatible: both have default implementations in a protocol extension, so an existing
 listener compiles and behaves unchanged.

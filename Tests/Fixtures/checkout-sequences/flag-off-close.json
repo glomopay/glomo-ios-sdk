@@ -1,0 +1,8 @@
+[
+  {
+    "type": "message",
+    "data": {
+      "type": "checkout.closed"
+    }
+  }
+]

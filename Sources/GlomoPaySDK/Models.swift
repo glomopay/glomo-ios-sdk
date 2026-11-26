@@ -289,11 +289,18 @@ public protocol GlomoPayListener: AnyObject {
     /// from the page; treat `stage` and the other strings as open sets.
     func onCheckoutStageChanged(_ event: GlomoCheckoutStageChangedEvent)
 
-    /// The checkout closed, with the furthest stage reached and why. At most once per checkout,
-    /// under the same conditions as `onCheckoutStageChanged`.
+    /// The checkout closed, with the furthest stage the page reported and why it ended.
     ///
-    /// Fires alongside `onPaymentTerminate`, not instead of it. On a sheet dismissal the SDK writes
-    /// it itself (`user_dismissed`), and only after it has seen a recognised stage.
+    /// Exactly once per checkout once a recognised stage has arrived, under the same conditions as
+    /// `onCheckoutStageChanged`, and always the last event of the checkout - nothing the page sends
+    /// afterwards is delivered. Not a replacement for `onPaymentTerminate`, which still fires on
+    /// every termination and arrives before this.
+    ///
+    /// On a close the page does not send, the SDK writes this itself: `completed` after a
+    /// successful payment or a submitted bank transfer, `error` after a failed payment or when the
+    /// customer leaves the SDK's own error screen, `user_dismissed` otherwise. A checkout closed
+    /// from host code before it reached a payment result sends none, because the contract has no
+    /// reason for it.
     func onCheckoutClosed(_ event: GlomoCheckoutClosedEvent)
 }
 

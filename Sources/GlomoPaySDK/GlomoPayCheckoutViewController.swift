@@ -1392,7 +1392,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             // descriptions are not localised or useful as customer-facing checkout copy.
             message: GlomoPayStrings.connectionErrorMessage(for: error.type),
             retry: #selector(retryTapped),
-            cancel: #selector(closeTapped)
+            cancel: #selector(errorPanelCloseTapped)
         )
         view.addSubview(panel)
         NSLayoutConstraint.activate([
@@ -1482,6 +1482,12 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
 
     @objc private func closeTapped() {
         terminate(source: .userDismiss)
+    }
+
+    /// Leaving the SDK's own error screen is an error exit, not a dismissal: the customer is
+    /// giving up on a checkout that failed to load, which is what the close reason has to say.
+    @objc private func errorPanelCloseTapped() {
+        terminate(source: .connectionError)
     }
 
     /// Dismisses this checkout from host code. Safe to call more than once; after the checkout

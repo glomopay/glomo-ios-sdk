@@ -11,11 +11,14 @@ final class GlomoPayEventRouter {
     private let trustedOrigins: Set<String>
     private var terminalDelivered = false
 
+    /// Supplies the envelope for a close the SDK writes, so it has to be a payload it validated.
     private var lastRecognisedStage: GlomoCheckoutStageChangedEvent?
-    private var closedDelivered = false
 
-    /// The outcome the journey ended in, if it reached one. First wins.
-    private var outcome: CheckoutOutcome?
+    /// How far the customer got, read off every delivered stage rather than only the recognised
+    /// ones. See `CheckoutPosition`.
+    private var lastPosition: CheckoutPosition?
+
+    private var closedDelivered = false
 
     /// The types a bank or 3-D Secure page must not be able to send.
     ///
@@ -214,10 +217,15 @@ final class GlomoPayEventRouter {
                 deliverToListener(reportingRelease: false) { $0.onCheckoutClosed(event) }
             }
         case "checkout.stage_changed":
+            // Nothing follows the close. The page keeps sending while the sheet dismisses - on a
+            // decline it reports `payment.failure` before the `failed` stage - and a stage after
+            // the close would contradict an event the merchant has already acted on.
+            guard !closedDelivered else { return }
             let stagePayload = data["payload"] as? [String: Any]
             guard isDeliverableCheckoutPayload(stagePayload), let stagePayload else { return }
             let event = GlomoCheckoutStageChangedEvent(json: stagePayload)
             if event.isRecognised { lastRecognisedStage = event }
+            if !event.stage.isEmpty { lastPosition = CheckoutPosition(stage: event.stage, step: event.step) }
             deliverToListener(reportingRelease: false) { $0.onCheckoutStageChanged(event) }
         // No `glomoCheckoutJourneyTerminate` case. Pay-via-bank is sunset and unsupported on iOS:
         // the event used to be tracked as Pay Via Bank Completed with no callback, no payload type
@@ -246,10 +254,15 @@ final class GlomoPayEventRouter {
 
     /// Writes the close the page never sent, for a dismissal that tore the WebView down. Needs a
     /// recognised stage: an absent `lastStage` would claim the checkout never opened.
+    ///
+    /// The payment outcome is not weighed here, because it cannot be set by the time this runs:
+    /// a delivered result terminates the controller, and every path into this one is guarded on
+    /// the checkout not having terminated. The close owed to an outcome is written at the
+    /// outcome, below, naming its own reason.
     func deliverNativeClose(source: TerminationSource) {
         guard let last = lastRecognisedStage,
               let reason = GlomoCheckoutCloseReasons.forClose(
-                  source: source, outcome: outcome, lastStage: last.stage
+                  source: source, lastStage: (lastPosition?.stage ?? last.stage)
               )
         else { return }
         writeClose(reason)
@@ -258,7 +271,8 @@ final class GlomoPayEventRouter {
     private func writeClose(_ reason: String) {
         guard !closedDelivered, let last = lastRecognisedStage else { return }
         closedDelivered = true
-        let event = last.synthesisedClose(reason: reason, at: Self.iso8601Now())
+        let position = lastPosition ?? CheckoutPosition(stage: last.stage, step: last.step)
+        let event = last.synthesisedClose(reason: reason, at: Self.iso8601Now(), position: position)
         deliverToListener(reportingRelease: false) { $0.onCheckoutClosed(event) }
     }
 
@@ -273,12 +287,6 @@ final class GlomoPayEventRouter {
         guard !terminalDelivered else { return false }
         // Set before the callback runs, so a host that re-enters cannot produce a second result.
         terminalDelivered = true
-        switch result {
-        case .success: outcome = .succeeded
-        case .failure: outcome = .failed
-        case .userJourney: outcome = .journeySubmitted
-        case .cancelled: break
-        }
         deliverToListener { listener in
             switch result {
             case .success(let payload):
@@ -291,8 +299,10 @@ final class GlomoPayEventRouter {
                 listener.onPaymentTerminate(termination ?? .userDismiss)
             }
         }
-        // A close is owed for every checkout, including one that ended in a result - the reason
-        // is the result rather than a dismissal.
+        // A result owes its own close, named after the result rather than after the dismissal
+        // that follows it. `.userJourney` is submitted, not settled, but the customer finished
+        // what the checkout asked of them and the contract has no separate reason for that.
+        // `.cancelled` is a dismissal, which writes its close through `deliverNativeClose`.
         switch result {
         case .success, .userJourney: writeClose(GlomoCheckoutCloseReasons.completed)
         case .failure: writeClose(GlomoCheckoutCloseReasons.error)
@@ -302,12 +312,8 @@ final class GlomoPayEventRouter {
         return true
     }
 
-    /// The listener is weak: if the host let it go, the result cannot be delivered. Report that
-    /// rather than dropping a payment outcome in silence.
-    ///
-    /// `reportingRelease: false` for checkout progress, which fires many times per checkout: a
-    /// released listener would otherwise report once per stage, burying the one report that
-    /// matters under noise the host can do nothing about.
+    /// The listener is weak, so a host that let it go gets no result. That is worth reporting -
+    /// but not once per stage, which is why checkout progress passes `reportingRelease: false`.
     private func deliverToListener(
         reportingRelease: Bool = true,
         _ deliver: (GlomoPayListener) -> Void

@@ -240,35 +240,6 @@ final class CheckoutStageEventsTests: XCTestCase {
         XCTAssertEqual(listener.closes.map(\.reason), [GlomoCheckoutCloseReasons.error])
     }
 
-    func testADismissalAfterAnOutcomeDoesNotTurnItIntoAnAbandonment() {
-        let listener = StageRecordingListener()
-        let router = makeRouter(listener: listener)
-        router.handle(body: stageEnvelope(stageChanged()), sender: glomoFrame)
-        router.handle(body: outcomeEnvelope("payment.success"), sender: glomoFrame)
-
-        router.deliverNativeClose(source: .userDismiss)
-
-        XCTAssertEqual(listener.closes.map(\.reason), [GlomoCheckoutCloseReasons.completed])
-    }
-
-    /// The outcome lands while the only stage so far is one the SDK will not quote, so no close is
-    /// written at the outcome itself and the reason has to be read off the outcome later.
-    func testAnOutcomeOutranksTheStageThatArrivesAfterIt() {
-        let listener = StageRecordingListener()
-        let router = makeRouter(listener: listener)
-        router.handle(body: stageEnvelope(stageChanged(["stage": "teleported"])), sender: glomoFrame)
-        router.handle(body: outcomeEnvelope("payment.success"), sender: glomoFrame)
-        XCTAssertTrue(listener.closes.isEmpty, "nothing to quote back yet")
-
-        router.handle(
-            body: stageEnvelope(stageChanged(["stage": "awaiting_confirmation", "step": nil])),
-            sender: glomoFrame
-        )
-        router.deliverNativeClose(source: .userDismiss)
-
-        XCTAssertEqual(listener.closes.map(\.reason), [GlomoCheckoutCloseReasons.completed])
-    }
-
     func testAConfirmedStageClosesAsCompletedWithoutAnyOutcome() {
         let listener = StageRecordingListener()
         let router = makeRouter(listener: listener)

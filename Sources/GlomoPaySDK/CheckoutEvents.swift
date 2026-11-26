@@ -38,25 +38,14 @@ public enum GlomoCheckoutCloseReasons {
     public static let error = "error"
     public static let confirmationTimeout = "confirmation_timeout"
 
-    /// The reason to report for a close this SDK writes itself, or nil when the contract has no
-    /// honest value for it.
+    /// The reason for a close this SDK writes on a dismissal, or nil where the contract has none.
+    /// A close owed to a payment outcome is written at the outcome and names its own reason, so
+    /// there is no outcome to weigh here.
     ///
-    /// `.programmatic` returns nil: the merchant closed the checkout, so `user_dismissed` would
-    /// blame the customer. A delivered outcome outranks the rest - the journey ended in a result,
-    /// and the dismissal is only the customer leaving the screen that said so.
-    static func forClose(
-        source: TerminationSource,
-        outcome: CheckoutOutcome?,
-        lastStage: String?
-    ) -> String? {
+    /// `.programmatic` returns nil: the merchant closed a checkout that reached no result, so
+    /// `user_dismissed` would blame the customer for the host's call.
+    static func forClose(source: TerminationSource, lastStage: String?) -> String? {
         if source == .programmatic { return nil }
-        switch outcome {
-        // Submitted, not settled - but the customer finished what the checkout asked of them,
-        // and the contract has no separate reason for it.
-        case .succeeded, .journeySubmitted: return completed
-        case .failed: return error
-        case nil: break
-        }
         if source == .connectionError { return error }
         switch lastStage {
         case GlomoCheckoutStages.confirmed: return completed
@@ -64,13 +53,6 @@ public enum GlomoCheckoutCloseReasons {
         default: return userDismissed
         }
     }
-}
-
-/// How the journey ended, where it ended at all.
-enum CheckoutOutcome {
-    case succeeded
-    case failed
-    case journeySubmitted
 }
 
 public struct GlomoCheckoutResource: Equatable, Sendable {
@@ -184,7 +166,7 @@ public struct GlomoCheckoutStageChangedEvent: Equatable, @unchecked Sendable {
     }
 }
 
-/// An absent `lastStage` means the checkout closed before it opened.
+/// `lastStage` is absent only when the page closed without ever reporting a stage.
 ///
 /// `@unchecked Sendable` for the same reason as `GlomoCheckoutStageChangedEvent`.
 public struct GlomoCheckoutClosedEvent: Equatable, @unchecked Sendable {
@@ -253,7 +235,14 @@ extension GlomoCheckoutStageChangedEvent {
         return known.contains(stage)
     }
 
-    func synthesisedClose(reason: String, at closedAt: String) -> GlomoCheckoutClosedEvent {
+    /// Quotes `position` for how far the customer got, which is not always a stage this version
+    /// recognises: the contract adds stages within v1, and quoting the last known one would report
+    /// the drop-off a step early.
+    func synthesisedClose(
+        reason: String,
+        at closedAt: String,
+        position: CheckoutPosition? = nil
+    ) -> GlomoCheckoutClosedEvent {
         GlomoCheckoutClosedEvent(
             version: version,
             resource: resource,
@@ -263,17 +252,20 @@ extension GlomoCheckoutStageChangedEvent {
             reason: reason,
             method: method,
             paymentId: paymentId,
-            lastStage: stage,
-            lastStep: step
+            lastStage: position?.stage ?? stage,
+            lastStep: position == nil ? step : position?.step
         )
     }
 }
 
-/// Whether a payload may be delivered at all.
-///
+/// Where the customer actually got to, tracked apart from the last stage the SDK recognised.
+struct CheckoutPosition {
+    let stage: String
+    let step: String?
+}
+
 /// No payload is the switch-off path and `[:]` is what arrives when the flag drops mid-session;
-/// neither can become a typed event without inventing fields, and a payload stamped with another
-/// contract version is not ours to read.
+/// neither is a v1 event.
 func isDeliverableCheckoutPayload(_ payload: [String: Any]?) -> Bool {
     guard let payload, !payload.isEmpty else { return false }
     return payload["v"] as? Int == GlomoCheckoutEventContract.version

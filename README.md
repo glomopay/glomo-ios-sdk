@@ -107,8 +107,9 @@ Payment stages arrive in this order, and each stage and step pair fires at most 
 `opened` and `customer_auth`; `errorCode` only on `failed`. `provider` is the bank and
 `journeyType` is `redirect` or `native`.
 
-`onCheckoutClosed` fires once per checkout, with `lastStage`, `lastStep` and a `reason` of
+`onCheckoutClosed` fires at most once per checkout, with `lastStage`, `lastStep` and a `reason` of
 `user_dismissed`, `user_cancelled`, `completed`, `error` or `confirmation_timeout`. `lastStage` is
+the furthest stage the page reported, including one this SDK version has never heard of, and is
 absent only when the page itself closed without ever reporting a stage.
 
 Swipe-dismiss, the Close button and the SDK's own connection-error screen never reach the page, so
@@ -117,10 +118,17 @@ submitted bank transfer, `error` after a failed payment or from the error screen
 `user_dismissed` otherwise - so a customer who finished paying and then dismissed the sheet is not
 counted as an abandonment. The SDK writes a close only once it has seen a stage it recognises,
 because an absent `lastStage` is a claim in its own right and it will not make one it cannot
-support. A checkout your own code closes reports none: the contract has no reason for it.
+support. A checkout your own code closes before it reached a payment result reports none: the
+contract has no reason for it.
 
-`onCheckoutClosed` does not replace `onPaymentTerminate`, which still reports every termination
-exactly as before; both fire for the same close.
+**On a declined payment, `lastStage` is the stage before `failed`.** The checkout page reports the
+failure to the SDK before it reports the `failed` stage, and the checkout closes on the failure, so
+the stage behind it is not delivered. The reason is still `error`. This is the page's ordering and
+is being corrected there; nothing in your integration has to change when it is.
+
+`onCheckoutClosed` does not replace `onPaymentTerminate`. It is the last event of every checkout -
+nothing the page sends afterwards is delivered - and it arrives after `onPaymentTerminate` wherever
+that still fires, which it does not once a payment has reported success or failure.
 
 Only v1 payloads are delivered. If checkout progress events are off for your business, or the page
 sends an empty or differently versioned payload, neither callback fires.

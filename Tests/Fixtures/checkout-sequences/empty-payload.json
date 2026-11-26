@@ -1,0 +1,16 @@
+[
+  {
+    "type": "message",
+    "data": {
+      "type": "checkout.stage_changed",
+      "payload": {}
+    }
+  },
+  {
+    "type": "message",
+    "data": {
+      "type": "checkout.closed",
+      "payload": {}
+    }
+  }
+]

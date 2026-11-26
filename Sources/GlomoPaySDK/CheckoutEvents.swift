@@ -226,7 +226,6 @@ public struct GlomoCheckoutClosedEvent: Equatable, @unchecked Sendable {
 }
 
 extension GlomoCheckoutStageChangedEvent {
-    /// Whether the SDK may quote this stage in a close it writes itself.
     var isRecognised: Bool {
         guard version == GlomoCheckoutEventContract.version else { return false }
         guard !journeyId.isEmpty, !resource.id.isEmpty else { return false }

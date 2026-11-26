@@ -31,9 +31,11 @@ public API changes require a new major release.
 Both callbacks need checkout progress events switched on for your business - talk to your Glomo
 contact. Until then the checkout behaves exactly as it does today and neither fires. Only v1
 payloads are delivered: an empty or differently versioned payload reports nothing.
-`onPaymentTerminate` is unchanged and still reports every termination; `onCheckoutClosed` adds
-where the customer stopped rather than replacing it. It is the last event of every checkout, after
-`onPaymentTerminate` wherever that still fires.
+`onPaymentTerminate` is unchanged; `onCheckoutClosed` adds where the customer stopped rather than
+replacing it, and where both fire `onPaymentTerminate` comes first. No progress events arrive after
+the close, it is not guaranteed - a checkout closed from your own code before any stage reports
+none - and it is not a payment outcome: after a dismissal the payment can still complete on the
+server, so read that from the payment status API or your webhook.
 
 Source-compatible: both have default implementations in a protocol extension, so an existing
 listener compiles and behaves unchanged.

@@ -1392,7 +1392,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
             // descriptions are not localised or useful as customer-facing checkout copy.
             message: GlomoPayStrings.connectionErrorMessage(for: error.type),
             retry: #selector(retryTapped),
-            cancel: #selector(errorPanelCloseTapped)
+            cancel: #selector(closeTapped)
         )
         view.addSubview(panel)
         NSLayoutConstraint.activate([
@@ -1484,12 +1484,6 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         terminate(source: .userDismiss)
     }
 
-    /// Leaving the SDK's own error screen is an error exit, not a dismissal: the customer is
-    /// giving up on a checkout that failed to load, which is what the close reason has to say.
-    @objc private func errorPanelCloseTapped() {
-        terminate(source: .connectionError)
-    }
-
     /// Dismisses this checkout from host code. Safe to call more than once; after the checkout
     /// has already finished it does nothing.
     @MainActor
@@ -1525,7 +1519,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         didTerminate = true
         cancelOpenWatchdogs()
         deliverToListener { $0.onPaymentTerminate(source) }
-        eventRouter?.deliverNativeClose(source: source)
+        eventRouter?.deliverNativeClose(source: closeSource(for: source))
         flushTerminalErrorReports()
         dismiss(animated: true)
     }
@@ -1588,6 +1582,16 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
                 page: .contentProcessTerminated
             )
         }
+    }
+
+    /// What `onCheckoutClosed` reports, which is not always what `onPaymentTerminate` reports.
+    ///
+    /// Leaving the SDK's own error screen is an error exit however the customer does it - the
+    /// Cancel button, a swipe, the Close item - but the termination source is an existing merchant
+    /// contract and keeps saying which gesture it was.
+    private func closeSource(for source: TerminationSource) -> TerminationSource {
+        guard source == .userDismiss, errorView != nil || flowErrorView != nil else { return source }
+        return .connectionError
     }
 
     private static func closeTrigger(for source: TerminationSource) -> AnalyticsCloseTrigger {

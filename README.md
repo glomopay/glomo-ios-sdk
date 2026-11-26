@@ -126,9 +126,20 @@ failure to the SDK before it reports the `failed` stage, and the checkout closes
 the stage behind it is not delivered. The reason is still `error`. This is the page's ordering and
 is being corrected there; nothing in your integration has to change when it is.
 
-`onCheckoutClosed` does not replace `onPaymentTerminate`. It is the last event of every checkout -
-nothing the page sends afterwards is delivered - and it arrives after `onPaymentTerminate` wherever
-that still fires, which it does not once a payment has reported success or failure.
+**No progress events arrive after `onCheckoutClosed`** - no stage changes, and no second close.
+Where `onPaymentTerminate` also fires, it comes first.
+
+A close is not guaranteed. A checkout closed from your own code before any stage arrived reports
+none, so treat `onCheckoutClosed` as "how far they got, when we can say", not as an
+end-of-checkout hook.
+
+**A close is not a payment outcome.** After a dismissal the payment can still complete on the
+server. Use the payment status API or your webhook to decide whether money moved; `reason:
+completed` means the customer finished what the checkout asked of them, not that the payment
+settled.
+
+`onCheckoutClosed` does not replace `onPaymentTerminate`, which still reports terminations as
+before.
 
 Only v1 payloads are delivered. If checkout progress events are off for your business, or the page
 sends an empty or differently versioned payload, neither callback fires.

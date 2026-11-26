@@ -53,8 +53,7 @@ final class CheckoutProgressControllerTests: XCTestCase {
         super.tearDown()
     }
 
-    /// Presented for real: `handleResult` dismisses, and an unpresented controller makes that a
-    /// no-op, which is the state production never reaches.
+    /// Hosted in a window so the dismissal path has somewhere to run.
     private func makeController(
         listener: GlomoPayListener,
         autoClose: Bool = true,
@@ -83,8 +82,7 @@ final class CheckoutProgressControllerTests: XCTestCase {
         return controller
     }
 
-    /// Loaded by path rather than `Bundle.module`: `Package.swift` is pinned by
-    /// `PackageManifestTests` and this is how `Tests/Fixtures` is already read.
+    /// By path, matching how `Tests/Fixtures` is already read in this target.
     private func sequence(_ name: String) throws -> [[String: Any]] {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -262,13 +260,8 @@ final class CheckoutProgressControllerTests: XCTestCase {
             didFailProvisionalNavigation: nil,
             withError: NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet, userInfo: nil)
         )
-        // Found by the action it carries, not by its title, so rewiring Cancel back to the plain
-        // dismiss fails here rather than passing with the wrong reason.
         let cancel = try XCTUnwrap(
-            buttons(in: controller.view).first { button in
-                button.actions(forTarget: controller, forControlEvent: .touchUpInside)?
-                    .contains("errorPanelCloseTapped") == true
-            },
+            buttons(in: controller.view).first { $0.title(for: .normal) == GlomoPayStrings.cancel },
             "the error panel's Cancel was not in the view tree"
         )
         // Performed rather than sent: `UIControl.sendActions` does not dispatch without a running
@@ -278,9 +271,36 @@ final class CheckoutProgressControllerTests: XCTestCase {
         }
         RunLoop.main.run(until: Date().addingTimeInterval(0.01))
 
+        // The termination source is an existing merchant contract and stays `userDismiss` - the
+        // customer tapped a button. Only the close reason knows they were on the error screen.
         XCTAssertEqual(
             listener.log,
-            ["stage:customer_auth", "terminate:connectionError", "closed:error:customer_auth"]
+            ["stage:customer_auth", "terminate:userDismiss", "closed:error:customer_auth"]
+        )
+        assertCloseIsLastAndSingle(listener.log)
+    }
+
+    /// The same rule for the other ways off that screen, which the Cancel button does not cover.
+    func testASwipeAwayFromTheErrorScreenAlsoClosesAsAnError() throws {
+        let listener = OrderedCheckoutListener()
+        let controller = makeController(listener: listener, autoClose: false, orderType: "standard")
+        try post(stage("customer_auth", step: "otp"), into: controller)
+
+        let main = try XCTUnwrap(webViews(in: controller.view).first)
+        controller.webView(
+            main,
+            didFailProvisionalNavigation: nil,
+            withError: NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet, userInfo: nil)
+        )
+        controller.presentationControllerDidDismiss(UIPresentationController(
+            presentedViewController: controller,
+            presenting: nil
+        ))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+
+        XCTAssertEqual(
+            listener.log,
+            ["stage:customer_auth", "terminate:userDismiss", "closed:error:customer_auth"]
         )
         assertCloseIsLastAndSingle(listener.log)
     }

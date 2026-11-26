@@ -252,13 +252,9 @@ final class GlomoPayEventRouter {
         }
     }
 
-    /// Writes the close the page never sent, for a dismissal that tore the WebView down. Needs a
-    /// recognised stage: an absent `lastStage` would claim the checkout never opened.
-    ///
-    /// The payment outcome is not weighed here, because it cannot be set by the time this runs:
-    /// a delivered result terminates the controller, and every path into this one is guarded on
-    /// the checkout not having terminated. The close owed to an outcome is written at the
-    /// outcome, below, naming its own reason.
+    /// Writes the close the page never sent. Needs a recognised stage: an absent `lastStage`
+    /// would claim the checkout never opened. A result writes its own close, below, so no outcome
+    /// can be set by the time this runs.
     func deliverNativeClose(source: TerminationSource) {
         guard let last = lastRecognisedStage,
               let reason = GlomoCheckoutCloseReasons.forClose(
@@ -299,10 +295,8 @@ final class GlomoPayEventRouter {
                 listener.onPaymentTerminate(termination ?? .userDismiss)
             }
         }
-        // A result owes its own close, named after the result rather than after the dismissal
-        // that follows it. `.userJourney` is submitted, not settled, but the customer finished
-        // what the checkout asked of them and the contract has no separate reason for that.
-        // `.cancelled` is a dismissal, which writes its close through `deliverNativeClose`.
+        // `.userJourney` is submitted, not settled, but the customer finished what the checkout
+        // asked of them and the contract has no separate reason for that.
         switch result {
         case .success, .userJourney: writeClose(GlomoCheckoutCloseReasons.completed)
         case .failure: writeClose(GlomoCheckoutCloseReasons.error)

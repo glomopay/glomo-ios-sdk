@@ -11,6 +11,15 @@ final class GlomoPayEventRouter {
     private let trustedOrigins: Set<String>
     private var terminalDelivered = false
 
+    /// Supplies the envelope for a close the SDK writes, so it has to be a payload it validated.
+    private var lastRecognisedStage: GlomoCheckoutStageChangedEvent?
+
+    /// How far the customer got, read off every delivered stage rather than only the recognised
+    /// ones. See `CheckoutPosition`.
+    private var lastPosition: CheckoutPosition?
+
+    private var closedDelivered = false
+
     /// The types a bank or 3-D Secure page must not be able to send.
     ///
     /// `message` carries every payment and lifecycle event, including `payment.success`.
@@ -196,8 +205,28 @@ final class GlomoPayEventRouter {
             complete(.failure(message: "Payment failed", code: nil), payload: payload)
         case "payment.pending", "pending":
             break
-        case "payment.cancelled", "cancelled", "checkout.closed":
+        case "payment.cancelled", "cancelled":
             complete(.cancelled, termination: .userDismiss)
+        case "checkout.closed":
+            // No payload when progress events are off for the merchant: onPaymentTerminate only.
+            let closedPayload = data["payload"] as? [String: Any]
+            complete(.cancelled, termination: .userDismiss)
+            if isDeliverableCheckoutPayload(closedPayload), let closedPayload, !closedDelivered {
+                closedDelivered = true
+                let event = GlomoCheckoutClosedEvent(json: closedPayload)
+                deliverToListener(reportingRelease: false) { $0.onCheckoutClosed(event) }
+            }
+        case "checkout.stage_changed":
+            // Nothing follows the close. The page keeps sending while the sheet dismisses - on a
+            // decline it reports `payment.failure` before the `failed` stage - and a stage after
+            // the close would contradict an event the merchant has already acted on.
+            guard !closedDelivered else { return }
+            let stagePayload = data["payload"] as? [String: Any]
+            guard isDeliverableCheckoutPayload(stagePayload), let stagePayload else { return }
+            let event = GlomoCheckoutStageChangedEvent(json: stagePayload)
+            if event.isRecognised { lastRecognisedStage = event }
+            if !event.stage.isEmpty { lastPosition = CheckoutPosition(stage: event.stage, step: event.step) }
+            deliverToListener(reportingRelease: false) { $0.onCheckoutStageChanged(event) }
         // No `glomoCheckoutJourneyTerminate` case. Pay-via-bank is sunset and unsupported on iOS:
         // the event used to be tracked as Pay Via Bank Completed with no callback, no payload type
         // and no enum member behind it, which made a dashboard show a live-looking signal for a
@@ -223,6 +252,32 @@ final class GlomoPayEventRouter {
         }
     }
 
+    /// Writes the close the page never sent. Needs a recognised stage: an absent `lastStage`
+    /// would claim the checkout never opened. A result writes its own close, below, so no outcome
+    /// can be set by the time this runs.
+    func deliverNativeClose(source: TerminationSource) {
+        guard let last = lastRecognisedStage,
+              let reason = GlomoCheckoutCloseReasons.forClose(
+                  source: source, lastStage: (lastPosition?.stage ?? last.stage)
+              )
+        else { return }
+        writeClose(reason)
+    }
+
+    private func writeClose(_ reason: String) {
+        guard !closedDelivered, let last = lastRecognisedStage else { return }
+        closedDelivered = true
+        let position = lastPosition ?? CheckoutPosition(stage: last.stage, step: last.step)
+        let event = last.synthesisedClose(reason: reason, at: Self.iso8601Now(), position: position)
+        deliverToListener(reportingRelease: false) { $0.onCheckoutClosed(event) }
+    }
+
+    private static func iso8601Now() -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: Date())
+    }
+
     @discardableResult
     private func complete(_ result: GlomoPayResult, payload: GlomoPayPayload? = nil, termination: TerminationSource? = nil) -> Bool {
         guard !terminalDelivered else { return false }
@@ -240,14 +295,25 @@ final class GlomoPayEventRouter {
                 listener.onPaymentTerminate(termination ?? .userDismiss)
             }
         }
+        // `.userJourney` is submitted, not settled, but the customer finished what the checkout
+        // asked of them and the contract has no separate reason for that.
+        switch result {
+        case .success, .userJourney: writeClose(GlomoCheckoutCloseReasons.completed)
+        case .failure: writeClose(GlomoCheckoutCloseReasons.error)
+        case .cancelled: break
+        }
         onComplete(result)
         return true
     }
 
-    /// The listener is weak: if the host let it go, the result cannot be delivered. Report that
-    /// rather than dropping a payment outcome in silence.
-    private func deliverToListener(_ deliver: (GlomoPayListener) -> Void) {
+    /// The listener is weak, so a host that let it go gets no result. That is worth reporting -
+    /// but not once per stage, which is why checkout progress passes `reportingRelease: false`.
+    private func deliverToListener(
+        reportingRelease: Bool = true,
+        _ deliver: (GlomoPayListener) -> Void
+    ) {
         guard let listener else {
+            guard reportingRelease else { return }
             errorReporter.capture(
                 operation: "listener_unavailable",
                 error: RouterError("Listener was released before a terminal result was delivered"),

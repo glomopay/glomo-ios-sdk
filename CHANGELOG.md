@@ -6,6 +6,44 @@ This project follows [Semantic Versioning](https://semver.org/).
 Starting with 1.0.0, the public API follows Semantic Versioning. Breaking
 public API changes require a new major release.
 
+## Unreleased
+
+### Added
+
+- **`onCheckoutStageChanged` on `GlomoPayListener`**, reporting how far a customer got through an
+  LRS checkout. It fires each time they reach a new stage - bank selected, details submitted, bank
+  authentication, handed off to the bank, awaiting confirmation - and carries the bank, the journey
+  type and the step within a stage where there is one. Stages arrive in order and each stage and
+  step pair fires at most once, so a drop-off funnel can be built by appending.
+- **`onCheckoutClosed` on `GlomoPayListener`**, delivered at most once per checkout with the
+  furthest stage the page reported and why it ended (`user_dismissed`, `user_cancelled`,
+  `completed`, `error`, `confirmation_timeout`). This is what lets a customer who abandoned at the
+  bank be told apart from one who never chose a bank. When the customer swipes the sheet away, taps
+  Close or leaves the SDK's connection-error screen, the SDK reports the close itself - `completed`
+  after a successful payment, `error` after a failed one or from the error screen, and
+  `user_dismissed` otherwise. A checkout closed by your own code before it reached a payment result
+  reports none. On a declined payment `lastStage` is the stage before `failed`, because the page
+  reports the failure ahead of that stage and the checkout closes on the failure.
+- **Types for the above**: `GlomoCheckoutStageChangedEvent`, `GlomoCheckoutClosedEvent`,
+  `GlomoCheckoutResource`, `GlomoCheckoutSegment`, and the `GlomoCheckoutStages` /
+  `GlomoCheckoutCloseReasons` constants. The event types are `Sendable`.
+
+Both callbacks need checkout progress events switched on for your business - talk to your Glomo
+contact. Until then the checkout behaves exactly as it does today and neither fires. Only v1
+payloads are delivered: an empty or differently versioned payload reports nothing.
+`onPaymentTerminate` is unchanged; `onCheckoutClosed` adds where the customer stopped rather than
+replacing it, and where both fire `onPaymentTerminate` comes first. No progress events arrive after
+the close, it is not guaranteed - a checkout closed from your own code before any stage reports
+none - and it is not a payment outcome: after a dismissal the payment can still complete on the
+server, so read that from the payment status API or your webhook.
+
+Source-compatible: both have default implementations in a protocol extension, so an existing
+listener compiles and behaves unchanged.
+
+Treat `stage`, `step`, `provider`, `method` and `reason` as open strings: new values can appear
+without a new payload version, and the SDK forwards them rather than filtering them out. Anything
+the contract adds later is reachable through `rawPayload`.
+
 ## [1.2.0] - 2026-11-12
 
 ### Changed

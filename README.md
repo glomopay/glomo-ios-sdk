@@ -90,6 +90,65 @@ The journey type carries one member. Pay-via-bank (lean / open finance) is sunse
 on iOS - matching Flutter and diverging from the RN SDK on purpose - so there is no member for it
 and no event behind it.
 
+### Checkout progress
+
+`onCheckoutStageChanged` and `onCheckoutClosed` report how far a customer got, so an abandoned
+checkout can be attributed to the step it stopped at rather than counted as one undifferentiated
+failure. Both have default implementations, so neither is required.
+
+**Both need checkout progress events switched on for your business**, and they only ever fire on
+LRS checkouts. Until then neither runs and the checkout behaves exactly as it does today.
+
+Payment stages arrive in this order, and each stage and step pair fires at most once -
+`customer_auth` repeats once per step - so a funnel can be built by appending:
+`opened` (step `consent` or `bank_list`), `method_selected`, `details_submitted`,
+`attempt_created`, `customer_auth` (step `otp`, `document_upload`, `txn_summary` or `agreements`),
+`provider_handoff`, `awaiting_confirmation`, then `confirmed` or `failed`. `step` appears only on
+`opened` and `customer_auth`; `errorCode` only on `failed`. `provider` is the bank and
+`journeyType` is `redirect` or `native`.
+
+`onCheckoutClosed` fires at most once per checkout, with `lastStage`, `lastStep` and a `reason` of
+`user_dismissed`, `user_cancelled`, `completed`, `error` or `confirmation_timeout`. `lastStage` is
+the furthest stage the page reported, including one this SDK version has never heard of, and is
+absent only when the page itself closed without ever reporting a stage.
+
+Swipe-dismiss, the Close button and the SDK's own connection-error screen never reach the page, so
+the SDK writes that close itself. The reason is `completed` after a successful payment or a
+submitted bank transfer, `error` after a failed payment or from the error screen, and
+`user_dismissed` otherwise - so a customer who finished paying and then dismissed the sheet is not
+counted as an abandonment. The SDK writes a close only once it has seen a stage it recognises,
+because an absent `lastStage` is a claim in its own right and it will not make one it cannot
+support. A checkout your own code closes before it reached a payment result reports none: the
+contract has no reason for it.
+
+**On a declined payment, `lastStage` is the stage before `failed`.** The checkout page reports the
+failure to the SDK before it reports the `failed` stage, and the checkout closes on the failure, so
+the stage behind it is not delivered. The reason is still `error`. This is the page's ordering and
+is being corrected there; nothing in your integration has to change when it is.
+
+**No progress events arrive after `onCheckoutClosed`** - no stage changes, and no second close.
+Where `onPaymentTerminate` also fires, it comes first.
+
+A close is not guaranteed. A checkout closed from your own code before any stage arrived reports
+none, so treat `onCheckoutClosed` as "how far they got, when we can say", not as an
+end-of-checkout hook.
+
+**A close is not a payment outcome.** After a dismissal the payment can still complete on the
+server. Use the payment status API or your webhook to decide whether money moved; `reason:
+completed` means the customer finished what the checkout asked of them, not that the payment
+settled.
+
+`onCheckoutClosed` does not replace `onPaymentTerminate`, which still reports terminations as
+before.
+
+Only v1 payloads are delivered. If checkout progress events are off for your business, or the page
+sends an empty or differently versioned payload, neither callback fires.
+
+`stage`, `step`, `provider`, `method` and `reason` are plain `String`s, not enums, because the
+contract adds values without a new payload version. Match on what you care about and ignore the
+rest - `GlomoCheckoutStages` and `GlomoCheckoutCloseReasons` name today's values but are not closed
+sets, and anything the contract adds later is reachable through `rawPayload`.
+
 ### Listener retention and callback rules
 
 The SDK holds the listener **weakly**: it does not keep a merchant object alive. Retain it for at

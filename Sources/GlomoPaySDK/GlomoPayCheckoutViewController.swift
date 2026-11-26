@@ -1519,6 +1519,7 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
         didTerminate = true
         cancelOpenWatchdogs()
         deliverToListener { $0.onPaymentTerminate(source) }
+        eventRouter?.deliverNativeClose(source: closeSource(for: source))
         flushTerminalErrorReports()
         dismiss(animated: true)
     }
@@ -1581,6 +1582,13 @@ public final class GlomoPayCheckoutViewController: UIViewController, WKNavigatio
                 page: .contentProcessTerminated
             )
         }
+    }
+
+    /// Leaving the SDK's own error screen is an error exit however it is done, while
+    /// `onPaymentTerminate` keeps reporting the gesture it has always reported.
+    private func closeSource(for source: TerminationSource) -> TerminationSource {
+        guard source == .userDismiss, errorView != nil || flowErrorView != nil else { return source }
+        return .connectionError
     }
 
     private static func closeTrigger(for source: TerminationSource) -> AnalyticsCloseTrigger {

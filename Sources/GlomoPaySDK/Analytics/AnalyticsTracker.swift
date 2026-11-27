@@ -28,5 +28,5 @@ enum AnalyticsEventName {
 }
 
 enum GlomoPaySDKBuild {
-    static let version = "1.2.0"
+    static let version = "1.3.0"
 }

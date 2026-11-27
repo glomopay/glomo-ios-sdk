@@ -2,11 +2,11 @@
 
 Native Swift implementation of the GlomoPay checkout SDK. The public contract is intentionally aligned with the Flutter and Kotlin SDKs.
 
-Current release: `1.2.0`
+Current release: `1.3.0`
 
 ## Installation with Swift Package Manager
 
-Add the Git repository URL in Xcode and select the `v1.2.0` release tag:
+Add the Git repository URL in Xcode and select the `v1.3.0` release tag:
 
 ```text
 https://github.com/glomopay/glomo-ios-sdk.git
@@ -109,7 +109,7 @@ Payment stages arrive in this order, and each stage and step pair fires at most 
 
 `onCheckoutClosed` fires at most once per checkout, with `lastStage`, `lastStep` and a `reason` of
 `user_dismissed`, `user_cancelled`, `completed`, `error` or `confirmation_timeout`. `lastStage` is
-the furthest stage the page reported, including one this SDK version has never heard of, and is
+the last stage the page reported, including one this SDK version has never heard of, and is
 absent only when the page itself closed without ever reporting a stage.
 
 Swipe-dismiss, the Close button and the SDK's own connection-error screen never reach the page, so
@@ -127,11 +127,13 @@ the stage behind it is not delivered. The reason is still `error`. This is the p
 is being corrected there; nothing in your integration has to change when it is.
 
 **No progress events arrive after `onCheckoutClosed`** - no stage changes, and no second close.
-Where `onPaymentTerminate` also fires, it comes first.
+Other callbacks are not covered by that: on the close path itself `onPaymentTerminate` comes first,
+but a late one can still land in the window while the checkout is dismissing.
 
-A close is not guaranteed. A checkout closed from your own code before any stage arrived reports
-none, so treat `onCheckoutClosed` as "how far they got, when we can say", not as an
-end-of-checkout hook.
+A close is not guaranteed, for two separate reasons: a checkout your own code closes before it
+reached a payment result reports none, and so does one the customer leaves before the SDK has seen
+a stage it recognises - an absent `lastStage` would claim the checkout never opened. Treat
+`onCheckoutClosed` as "how far they got, when we can say", not as an end-of-checkout hook.
 
 **A close is not a payment outcome.** After a dismissal the payment can still complete on the
 server. Use the payment status API or your webhook to decide whether money moved; `reason:
@@ -316,8 +318,9 @@ Swift Package Manager takes the package version from the Git tag, so there is no
 field in `Package.swift`. The SDK's own version string lives in `GlomoPaySDKBuild.version`
 (`Sources/GlomoPaySDK/Analytics/AnalyticsTracker.swift`) and is what Mixpanel and Sentry
 report; it is not derived from the tag, so it must be updated by hand in the same commit.
-Keep `GlomoPaySDKBuild.version`, `CHANGELOG.md`, and the Git release tag in step. For
-version `1.2.0`:
+Keep `GlomoPaySDKBuild.version`, `CHANGELOG.md`, and the Git release tag in step: for version
+`1.3.0` that means `GlomoPaySDKBuild.version = "1.3.0"`, a `## [1.3.0]` changelog heading, and the
+tag `v1.3.0` below.
 
 There is no separate publish step. Swift Package Manager resolves the package directly from
 this repository, so the tag on `main` is the release. Everything a merchant compiles must
@@ -344,8 +347,8 @@ token or symbol-upload credential in this file.
 After the release pull request is merged, tag the merge commit on `main`:
 
 ```bash
-git tag v1.2.0
-git push origin v1.2.0
+git tag v1.3.0
+git push origin v1.3.0
 ```
 
 Tags are only ever created on `main`, never on a release branch.

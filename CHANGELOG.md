@@ -6,7 +6,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 Starting with 1.0.0, the public API follows Semantic Versioning. Breaking
 public API changes require a new major release.
 
-## Unreleased
+## [1.3.0] - 2026-11-27
 
 ### Added
 
@@ -16,7 +16,7 @@ public API changes require a new major release.
   type and the step within a stage where there is one. Stages arrive in order and each stage and
   step pair fires at most once, so a drop-off funnel can be built by appending.
 - **`onCheckoutClosed` on `GlomoPayListener`**, delivered at most once per checkout with the
-  furthest stage the page reported and why it ended (`user_dismissed`, `user_cancelled`,
+  last stage the page reported and why it ended (`user_dismissed`, `user_cancelled`,
   `completed`, `error`, `confirmation_timeout`). This is what lets a customer who abandoned at the
   bank be told apart from one who never chose a bank. When the customer swipes the sheet away, taps
   Close or leaves the SDK's connection-error screen, the SDK reports the close itself - `completed`
@@ -32,10 +32,11 @@ Both callbacks need checkout progress events switched on for your business - tal
 contact. Until then the checkout behaves exactly as it does today and neither fires. Only v1
 payloads are delivered: an empty or differently versioned payload reports nothing.
 `onPaymentTerminate` is unchanged; `onCheckoutClosed` adds where the customer stopped rather than
-replacing it, and where both fire `onPaymentTerminate` comes first. No progress events arrive after
-the close, it is not guaranteed - a checkout closed from your own code before any stage reports
-none - and it is not a payment outcome: after a dismissal the payment can still complete on the
-server, so read that from the payment status API or your webhook.
+replacing it, and on the close path `onPaymentTerminate` comes first - though a late one can still
+land while the sheet dismisses. No progress events arrive after
+the close, it is not guaranteed - a checkout closed from your own code before it reached a payment
+result reports none - and it is not a payment outcome: after a dismissal the payment can still
+complete on the server, so read that from the payment status API or your webhook.
 
 Source-compatible: both have default implementations in a protocol extension, so an existing
 listener compiles and behaves unchanged.

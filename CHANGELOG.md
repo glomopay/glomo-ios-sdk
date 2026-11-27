@@ -32,7 +32,8 @@ Both callbacks need checkout progress events switched on for your business - tal
 contact. Until then the checkout behaves exactly as it does today and neither fires. Only v1
 payloads are delivered: an empty or differently versioned payload reports nothing.
 `onPaymentTerminate` is unchanged; `onCheckoutClosed` adds where the customer stopped rather than
-replacing it, and where both fire `onPaymentTerminate` comes first. No progress events arrive after
+replacing it, and on the close path `onPaymentTerminate` comes first - though a late one can still
+land while the sheet dismisses. No progress events arrive after
 the close, it is not guaranteed - a checkout closed from your own code before it reached a payment
 result reports none - and it is not a payment outcome: after a dismissal the payment can still
 complete on the server, so read that from the payment status API or your webhook.
